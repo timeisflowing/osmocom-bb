@@ -1,0 +1,238 @@
+   1              		.file	"buzzer.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.buzzer_mode_pwt,"ax",%progbits
+  12              		.align	2
+  13              		.global	buzzer_mode_pwt
+  15              	buzzer_mode_pwt:
+  16              	.LFB0:
+  17              		.file 1 "calypso/buzzer.c"
+   1:calypso/buzzer.c **** /* Calypso DBB internal PWT (Pulse Width / T) Buzzer Driver */
+   2:calypso/buzzer.c **** 
+   3:calypso/buzzer.c **** /* (C) 2010 by Jose Pereira <onaips@gmail.com>
+   4:calypso/buzzer.c ****  *
+   5:calypso/buzzer.c ****  * All Rights Reserved
+   6:calypso/buzzer.c ****  *
+   7:calypso/buzzer.c ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/buzzer.c ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/buzzer.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/buzzer.c ****  * (at your option) any later version.
+  11:calypso/buzzer.c ****  *
+  12:calypso/buzzer.c ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/buzzer.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/buzzer.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/buzzer.c ****  * GNU General Public License for more details.
+  16:calypso/buzzer.c ****  *
+  17:calypso/buzzer.c ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/buzzer.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/buzzer.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/buzzer.c ****  *
+  21:calypso/buzzer.c ****  */
+  22:calypso/buzzer.c **** 
+  23:calypso/buzzer.c **** #include <stdint.h>
+  24:calypso/buzzer.c **** #include <memory.h>
+  25:calypso/buzzer.c **** 
+  26:calypso/buzzer.c **** #define BASE_ADDR_PWL	0xfffe8800
+  27:calypso/buzzer.c **** #define PWT_REG(m)	(BASE_ADDR_PWL + (m))
+  28:calypso/buzzer.c **** 
+  29:calypso/buzzer.c **** #define ASIC_CONF_REG		0xfffef008
+  30:calypso/buzzer.c **** #define BUZZ_LEVEL_REG		0xfffe480e
+  31:calypso/buzzer.c **** 
+  32:calypso/buzzer.c **** enum pwt_reg {
+  33:calypso/buzzer.c **** 	FRC_REG	= 0,
+  34:calypso/buzzer.c **** 	VRC_REG = 1,
+  35:calypso/buzzer.c **** 	GCR_REG = 2,
+  36:calypso/buzzer.c **** };
+  37:calypso/buzzer.c **** 
+  38:calypso/buzzer.c **** #define ASCONF_PWT_ENA	(1 << 5)
+  39:calypso/buzzer.c **** 
+  40:calypso/buzzer.c **** void buzzer_mode_pwt(int on)
+  41:calypso/buzzer.c **** {
+  18              		.loc 1 41 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  42:calypso/buzzer.c **** 	uint16_t reg;
+  43:calypso/buzzer.c **** 
+  44:calypso/buzzer.c **** 	reg = readw(ASIC_CONF_REG);
+  24              		.loc 1 44 0
+  25 0000 30309FE5 		ldr	r3, .L4
+  26 0004 B72F53E1 		ldrh	r2, [r3, #-247]
+  27              	.LVL1:
+  45:calypso/buzzer.c **** 
+  46:calypso/buzzer.c **** 	if (on) {
+  28              		.loc 1 46 0
+  29 0008 000050E3 		cmp	r0, #0
+  47:calypso/buzzer.c **** 		/* Enable pwt */
+  48:calypso/buzzer.c **** 		writeb(0x01, PWT_REG(GCR_REG));
+  49:calypso/buzzer.c **** 		/* Switch pin from LT to PWL */
+  50:calypso/buzzer.c **** 		reg |= ASCONF_PWT_ENA;
+  51:calypso/buzzer.c **** 		writew(reg, ASIC_CONF_REG);
+  52:calypso/buzzer.c **** 	} else {
+  53:calypso/buzzer.c **** 		/* Switch pin from PWT to BU */
+  54:calypso/buzzer.c **** 		reg |= ~ASCONF_PWT_ENA;
+  30              		.loc 1 54 0
+  31 000c FF2C8203 		orreq	r2, r2, #65280
+  32              	.LVL2:
+  33 0010 DF208203 		orreq	r2, r2, #223
+  55:calypso/buzzer.c **** 		writew(reg, ASIC_CONF_REG);
+  34              		.loc 1 55 0
+  35 0014 B72F4301 		streqh	r2, [r3, #-247]	@ movhi
+  48:calypso/buzzer.c **** 		writeb(0x01, PWT_REG(GCR_REG));
+  36              		.loc 1 48 0
+  37 0018 1C109F15 		ldrne	r1, .L4+4
+  56:calypso/buzzer.c **** 		/* Disable pwt */
+  57:calypso/buzzer.c **** 		writeb(0x00, PWT_REG(GCR_REG));
+  38              		.loc 1 57 0
+  39 001c 18309F05 		ldreq	r3, .L4+4
+  48:calypso/buzzer.c **** 		writeb(0x01, PWT_REG(GCR_REG));
+  40              		.loc 1 48 0
+  41 0020 0100A013 		movne	r0, #1
+  42              	.LVL3:
+  50:calypso/buzzer.c **** 		reg |= ASCONF_PWT_ENA;
+  43              		.loc 1 50 0
+  44 0024 20208213 		orrne	r2, r2, #32
+  45              	.LVL4:
+  48:calypso/buzzer.c **** 		writeb(0x01, PWT_REG(GCR_REG));
+  46              		.loc 1 48 0
+  47 0028 FD004115 		strneb	r0, [r1, #-253]
+  48              		.loc 1 57 0
+  49 002c FD004305 		streqb	r0, [r3, #-253]
+  51:calypso/buzzer.c **** 		writew(reg, ASIC_CONF_REG);
+  50              		.loc 1 51 0
+  51 0030 B72F4311 		strneh	r2, [r3, #-247]	@ movhi
+  52 0034 1EFF2FE1 		bx	lr
+  53              	.L5:
+  54              		.align	2
+  55              	.L4:
+  56 0038 FFF0FEFF 		.word	-69377
+  57 003c FF88FEFF 		.word	-96001
+  58              		.cfi_endproc
+  59              	.LFE0:
+  61              		.section	.text.buzzer_volume,"ax",%progbits
+  62              		.align	2
+  63              		.global	buzzer_volume
+  65              	buzzer_volume:
+  66              	.LFB1:
+  58:calypso/buzzer.c **** 	}
+  59:calypso/buzzer.c **** }
+  60:calypso/buzzer.c **** 
+  61:calypso/buzzer.c **** void buzzer_volume(uint8_t level)
+  62:calypso/buzzer.c **** {
+  67              		.loc 1 62 0
+  68              		.cfi_startproc
+  69              		@ args = 0, pretend = 0, frame = 0
+  70              		@ frame_needed = 0, uses_anonymous_args = 0
+  71              		@ link register save eliminated.
+  72              	.LVL5:
+  63:calypso/buzzer.c **** 
+  64:calypso/buzzer.c **** 	if (readw(ASIC_CONF_REG) & ASCONF_PWT_ENA) {
+  73              		.loc 1 64 0
+  74 0000 34309FE5 		ldr	r3, .L10
+  75 0004 B73F53E1 		ldrh	r3, [r3, #-247]
+  76 0008 200013E3 		tst	r3, #32
+  62:calypso/buzzer.c **** {
+  77              		.loc 1 62 0
+  78 000c FF0000E2 		and	r0, r0, #255
+  79              	.LVL6:
+  80              		.loc 1 64 0
+  81 0010 0500000A 		beq	.L7
+  65:calypso/buzzer.c **** 
+  66:calypso/buzzer.c **** 	  if (level) {
+  82              		.loc 1 66 0
+  83 0014 000050E3 		cmp	r0, #0
+  67:calypso/buzzer.c **** 		//scaling the volume as pwt only knows 0..63
+  68:calypso/buzzer.c **** 		level = level >> 1;
+  84              		.loc 1 68 0
+  85 0018 A000A011 		movne	r0, r0, lsr #1
+  86              	.LVL7:
+  69:calypso/buzzer.c **** 		//if level > 0 buzzer is on
+  70:calypso/buzzer.c **** 		level |= 0x01;
+  71:calypso/buzzer.c **** 	  }
+  72:calypso/buzzer.c **** 
+  73:calypso/buzzer.c **** 	  writeb(level,PWT_REG(VRC_REG));
+  87              		.loc 1 73 0
+  88 001c 1C309FE5 		ldr	r3, .L10+4
+  70:calypso/buzzer.c **** 		level |= 0x01;
+  89              		.loc 1 70 0
+  90 0020 01008013 		orrne	r0, r0, #1
+  91              	.LVL8:
+  92              		.loc 1 73 0
+  93 0024 FE0043E5 		strb	r0, [r3, #-254]
+  94 0028 1EFF2FE1 		bx	lr
+  95              	.LVL9:
+  96              	.L7:
+  74:calypso/buzzer.c **** 
+  75:calypso/buzzer.c **** 	} else {
+  76:calypso/buzzer.c **** 		/* we need to scale the buzz level, as the
+  77:calypso/buzzer.c **** 		 * ARMIO buzz controller only knows 0..63 */
+  78:calypso/buzzer.c **** 		writeb(level>>2, BUZZ_LEVEL_REG);
+  97              		.loc 1 78 0
+  98 002c 10309FE5 		ldr	r3, .L10+8
+  99 0030 2001A0E1 		mov	r0, r0, lsr #2
+ 100 0034 F10043E5 		strb	r0, [r3, #-241]
+ 101 0038 1EFF2FE1 		bx	lr
+ 102              	.L11:
+ 103              		.align	2
+ 104              	.L10:
+ 105 003c FFF0FEFF 		.word	-69377
+ 106 0040 FF88FEFF 		.word	-96001
+ 107 0044 FF48FEFF 		.word	-112385
+ 108              		.cfi_endproc
+ 109              	.LFE1:
+ 111              		.section	.text.buzzer_note,"ax",%progbits
+ 112              		.align	2
+ 113              		.global	buzzer_note
+ 115              	buzzer_note:
+ 116              	.LFB2:
+  79:calypso/buzzer.c **** 	}
+  80:calypso/buzzer.c **** }
+  81:calypso/buzzer.c **** 
+  82:calypso/buzzer.c **** void buzzer_note(uint8_t note)
+  83:calypso/buzzer.c **** {
+ 117              		.loc 1 83 0
+ 118              		.cfi_startproc
+ 119              		@ args = 0, pretend = 0, frame = 0
+ 120              		@ frame_needed = 0, uses_anonymous_args = 0
+ 121              		@ link register save eliminated.
+ 122              	.LVL10:
+  84:calypso/buzzer.c ****   if ( (readw(ASIC_CONF_REG) & ASCONF_PWT_ENA) )
+ 123              		.loc 1 84 0
+ 124 0000 14309FE5 		ldr	r3, .L14
+ 125 0004 B73F53E1 		ldrh	r3, [r3, #-247]
+ 126 0008 200013E3 		tst	r3, #32
+  85:calypso/buzzer.c ****       writeb(note,PWT_REG(FRC_REG));
+ 127              		.loc 1 85 0
+ 128 000c 0C309F15 		ldrne	r3, .L14+4
+  83:calypso/buzzer.c **** {
+ 129              		.loc 1 83 0
+ 130 0010 FF0000E2 		and	r0, r0, #255
+ 131              	.LVL11:
+ 132              		.loc 1 85 0
+ 133 0014 FF004315 		strneb	r0, [r3, #-255]
+ 134 0018 1EFF2FE1 		bx	lr
+ 135              	.L15:
+ 136              		.align	2
+ 137              	.L14:
+ 138 001c FFF0FEFF 		.word	-69377
+ 139 0020 FF88FEFF 		.word	-96001
+ 140              		.cfi_endproc
+ 141              	.LFE2:
+ 143              		.text
+ 144              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 buzzer.c
+     /tmp/ccyzwM7q.s:12     .text.buzzer_mode_pwt:0000000000000000 $a
+     /tmp/ccyzwM7q.s:15     .text.buzzer_mode_pwt:0000000000000000 buzzer_mode_pwt
+     /tmp/ccyzwM7q.s:56     .text.buzzer_mode_pwt:0000000000000038 $d
+     /tmp/ccyzwM7q.s:62     .text.buzzer_volume:0000000000000000 $a
+     /tmp/ccyzwM7q.s:65     .text.buzzer_volume:0000000000000000 buzzer_volume
+     /tmp/ccyzwM7q.s:105    .text.buzzer_volume:000000000000003c $d
+     /tmp/ccyzwM7q.s:112    .text.buzzer_note:0000000000000000 $a
+     /tmp/ccyzwM7q.s:115    .text.buzzer_note:0000000000000000 buzzer_note
+     /tmp/ccyzwM7q.s:138    .text.buzzer_note:000000000000001c $d
+                     .debug_frame:0000000000000010 $d
+
+NO UNDEFINED SYMBOLS

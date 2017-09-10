@@ -1,0 +1,356 @@
+   1              		.file	"spi.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.spi_init,"ax",%progbits
+  12              		.align	2
+  13              		.global	spi_init
+  15              	spi_init:
+  16              	.LFB0:
+  17              		.file 1 "calypso/spi.c"
+   1:calypso/spi.c **** /* Driver for SPI Master Controller inside TI Calypso */
+   2:calypso/spi.c **** 
+   3:calypso/spi.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:calypso/spi.c ****  *
+   5:calypso/spi.c ****  * All Rights Reserved
+   6:calypso/spi.c ****  *
+   7:calypso/spi.c ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/spi.c ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/spi.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/spi.c ****  * (at your option) any later version.
+  11:calypso/spi.c ****  *
+  12:calypso/spi.c ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/spi.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/spi.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/spi.c ****  * GNU General Public License for more details.
+  16:calypso/spi.c ****  *
+  17:calypso/spi.c ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/spi.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/spi.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/spi.c ****  *
+  21:calypso/spi.c ****  */
+  22:calypso/spi.c **** 
+  23:calypso/spi.c **** #include <stdint.h>
+  24:calypso/spi.c **** #include <stdio.h>
+  25:calypso/spi.c **** 
+  26:calypso/spi.c **** //#define DEBUG
+  27:calypso/spi.c **** #include <debug.h>
+  28:calypso/spi.c **** 
+  29:calypso/spi.c **** #include <memory.h>
+  30:calypso/spi.c **** #include <spi.h>
+  31:calypso/spi.c **** #include <delay.h>
+  32:calypso/spi.c **** 
+  33:calypso/spi.c **** #define BASE_ADDR_SPI	0xfffe3000
+  34:calypso/spi.c **** #define SPI_REG(n)	(BASE_ADDR_SPI+(n))
+  35:calypso/spi.c **** 
+  36:calypso/spi.c **** enum spi_regs {
+  37:calypso/spi.c **** 	REG_SET1	= 0x00,
+  38:calypso/spi.c **** 	REG_SET2	= 0x02,
+  39:calypso/spi.c **** 	REG_CTRL	= 0x04,
+  40:calypso/spi.c **** 	REG_STATUS	= 0x06,
+  41:calypso/spi.c **** 	REG_TX_LSB	= 0x08,
+  42:calypso/spi.c **** 	REG_TX_MSB	= 0x0a,
+  43:calypso/spi.c **** 	REG_RX_LSB	= 0x0c,
+  44:calypso/spi.c **** 	REG_RX_MSB	= 0x0e,
+  45:calypso/spi.c **** };
+  46:calypso/spi.c **** 
+  47:calypso/spi.c **** #define SPI_SET1_EN_CLK		(1 << 0)
+  48:calypso/spi.c **** #define SPI_SET1_WR_IRQ_DIS	(1 << 4)
+  49:calypso/spi.c **** #define SPI_SET1_RDWR_IRQ_DIS	(1 << 5)
+  50:calypso/spi.c **** 
+  51:calypso/spi.c **** #define SPI_CTRL_RDWR		(1 << 0)
+  52:calypso/spi.c **** #define SPI_CTRL_WR		(1 << 1)
+  53:calypso/spi.c **** #define SPI_CTRL_NB_SHIFT	2
+  54:calypso/spi.c **** #define SPI_CTRL_AD_SHIFT	7
+  55:calypso/spi.c **** 
+  56:calypso/spi.c **** #define SPI_STATUS_RE		(1 << 0)	/* Read End */
+  57:calypso/spi.c **** #define SPI_STATUS_WE		(1 << 1)	/* Write End */
+  58:calypso/spi.c **** 
+  59:calypso/spi.c **** void spi_init(void)
+  60:calypso/spi.c **** {
+  18              		.loc 1 60 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  61:calypso/spi.c **** 	writew(SPI_SET1_EN_CLK | SPI_SET1_WR_IRQ_DIS | SPI_SET1_RDWR_IRQ_DIS,
+  23              		.loc 1 61 0
+  24 0000 10309FE5 		ldr	r3, .L2
+  25 0004 3120A0E3 		mov	r2, #49	@ movhi
+  26 0008 BF2F43E1 		strh	r2, [r3, #-255]	@ movhi
+  62:calypso/spi.c **** 	       SPI_REG(REG_SET1));
+  63:calypso/spi.c **** 
+  64:calypso/spi.c **** 	writew(0x0001, SPI_REG(REG_SET2));
+  27              		.loc 1 64 0
+  28 000c 0120A0E3 		mov	r2, #1	@ movhi
+  29 0010 BD2F43E1 		strh	r2, [r3, #-253]	@ movhi
+  65:calypso/spi.c **** }
+  30              		.loc 1 65 0
+  31 0014 1EFF2FE1 		bx	lr
+  32              	.L3:
+  33              		.align	2
+  34              	.L2:
+  35 0018 FF30FEFF 		.word	-118529
+  36              		.cfi_endproc
+  37              	.LFE0:
+  39              		.section	.text.spi_xfer,"ax",%progbits
+  40              		.align	2
+  41              		.global	spi_xfer
+  43              	spi_xfer:
+  44              	.LFB1:
+  66:calypso/spi.c **** 
+  67:calypso/spi.c **** int spi_xfer(uint8_t dev_idx, uint8_t bitlen, const void *dout, void *din)
+  68:calypso/spi.c **** {
+  45              		.loc 1 68 0
+  46              		.cfi_startproc
+  47              		@ args = 0, pretend = 0, frame = 0
+  48              		@ frame_needed = 0, uses_anonymous_args = 0
+  49              	.LVL0:
+  50 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+  51              	.LCFI0:
+  52              		.cfi_def_cfa_offset 12
+  69:calypso/spi.c **** 	uint8_t bytes_per_xfer;
+  70:calypso/spi.c **** 	uint8_t reg_status, reg_ctrl = 0;
+  71:calypso/spi.c **** 	uint32_t tmp;
+  72:calypso/spi.c **** 
+  73:calypso/spi.c **** 	if (bitlen == 0)
+  53              		.loc 1 73 0
+  54 0004 FF4011E2 		ands	r4, r1, #255
+  55              		.cfi_offset 14, -4
+  56              		.cfi_offset 5, -8
+  57              		.cfi_offset 4, -12
+  68:calypso/spi.c **** {
+  58              		.loc 1 68 0
+  59 0008 0350A0E1 		mov	r5, r3
+  60 000c FF3000E2 		and	r3, r0, #255
+  61              	.LVL1:
+  74:calypso/spi.c **** 		return 0;
+  62              		.loc 1 74 0
+  63 0010 0400A001 		moveq	r0, r4
+  64              	.LVL2:
+  73:calypso/spi.c **** 	if (bitlen == 0)
+  65              		.loc 1 73 0
+  66 0014 3080BD08 		ldmeqfd	sp!, {r4, r5, pc}
+  75:calypso/spi.c **** 
+  76:calypso/spi.c **** 	if (bitlen > 32)
+  67              		.loc 1 76 0
+  68 0018 200054E3 		cmp	r4, #32
+  69 001c 3200008A 		bhi	.L18
+  77:calypso/spi.c **** 		return -1;
+  78:calypso/spi.c **** 
+  79:calypso/spi.c **** 	if (dev_idx > 4)
+  70              		.loc 1 79 0
+  71 0020 040053E3 		cmp	r3, #4
+  72 0024 3000008A 		bhi	.L18
+  73              	.LVL3:
+  80:calypso/spi.c **** 		return -1;
+  81:calypso/spi.c **** 
+  82:calypso/spi.c **** 	bytes_per_xfer = bitlen / 8;
+  83:calypso/spi.c **** 	if (bitlen % 8)
+  84:calypso/spi.c **** 		bytes_per_xfer ++;
+  85:calypso/spi.c **** 
+  86:calypso/spi.c **** 	reg_ctrl |= (bitlen - 1) << SPI_CTRL_NB_SHIFT;
+  87:calypso/spi.c **** 	reg_ctrl |= (dev_idx & 0x7) << SPI_CTRL_AD_SHIFT;
+  74              		.loc 1 87 0
+  75 0028 070000E2 		and	r0, r0, #7
+  86:calypso/spi.c **** 	reg_ctrl |= (bitlen - 1) << SPI_CTRL_NB_SHIFT;
+  76              		.loc 1 86 0
+  77 002c 013044E2 		sub	r3, r4, #1
+  78              		.loc 1 87 0
+  79 0030 8003A0E1 		mov	r0, r0, asl #7
+  80 0034 030180E1 		orr	r0, r0, r3, asl #2
+  88:calypso/spi.c **** 
+  89:calypso/spi.c **** 	if (bitlen <= 8) {
+  81              		.loc 1 89 0
+  82 0038 080054E3 		cmp	r4, #8
+  87:calypso/spi.c **** 	reg_ctrl |= (dev_idx & 0x7) << SPI_CTRL_AD_SHIFT;
+  83              		.loc 1 87 0
+  84 003c FF0000E2 		and	r0, r0, #255
+  85              	.LVL4:
+  90:calypso/spi.c **** 		tmp = *(uint8_t *)dout;
+  86              		.loc 1 90 0
+  87 0040 0020D295 		ldrlsb	r2, [r2, #0]	@ zero_extendqisi2
+  88              	.LVL5:
+  91:calypso/spi.c **** 		tmp <<= 24 + (8-bitlen);	/* align to MSB */
+  89              		.loc 1 91 0
+  90 0044 20306492 		rsbls	r3, r4, #32
+  89:calypso/spi.c **** 	if (bitlen <= 8) {
+  91              		.loc 1 89 0
+  92 0048 0300009A 		bls	.L21
+  92:calypso/spi.c **** 	} else if (bitlen <= 16) {
+  93              		.loc 1 92 0
+  94 004c 100054E3 		cmp	r4, #16
+  93:calypso/spi.c **** 		tmp = *(uint16_t *)dout;
+  95              		.loc 1 93 0
+  96 0050 B020D291 		ldrlsh	r2, [r2, #0]
+  97              	.LVL6:
+  94:calypso/spi.c **** 		tmp <<= 16 + (16-bitlen);	/* align to MSB */
+  95:calypso/spi.c **** 	} else {
+  96:calypso/spi.c **** 		tmp = *(uint32_t *)dout;
+  98              		.loc 1 96 0
+  99 0054 00209285 		ldrhi	r2, [r2, #0]
+ 100              	.LVL7:
+ 101 0058 203064E2 		rsb	r3, r4, #32
+ 102              	.L21:
+ 103              	.LVL8:
+  97:calypso/spi.c **** 		tmp <<= (32-bitlen);		/* align to MSB */
+ 104              		.loc 1 97 0
+ 105 005c 1233A0E1 		mov	r3, r2, asl r3
+ 106              	.LVL9:
+  98:calypso/spi.c **** 	}
+  99:calypso/spi.c **** 	printd("spi_xfer(dev_idx=%u, bitlen=%u, data_out=0x%08x): ",
+ 100:calypso/spi.c **** 		dev_idx, bitlen, tmp);
+ 101:calypso/spi.c **** 
+ 102:calypso/spi.c **** 	/* fill transmit registers */
+ 103:calypso/spi.c **** 	writew(tmp >> 16, SPI_REG(REG_TX_MSB));
+ 107              		.loc 1 103 0
+ 108 0060 94209FE5 		ldr	r2, .L23
+ 109 0064 2318A0E1 		mov	r1, r3, lsr #16
+ 110              	.LVL10:
+ 104:calypso/spi.c **** 	writew(tmp & 0xffff, SPI_REG(REG_TX_LSB));
+ 111              		.loc 1 104 0
+ 112 0068 0338A0E1 		mov	r3, r3, asl #16
+ 113              	.LVL11:
+ 114 006c 2338A0E1 		mov	r3, r3, lsr #16
+ 103:calypso/spi.c **** 	writew(tmp >> 16, SPI_REG(REG_TX_MSB));
+ 115              		.loc 1 103 0
+ 116 0070 B51F42E1 		strh	r1, [r2, #-245]	@ movhi
+ 105:calypso/spi.c **** 
+ 106:calypso/spi.c **** 	/* initiate transfer */
+ 107:calypso/spi.c **** 	if (din)
+ 117              		.loc 1 107 0
+ 118 0074 000055E3 		cmp	r5, #0
+ 104:calypso/spi.c **** 	writew(tmp & 0xffff, SPI_REG(REG_TX_LSB));
+ 119              		.loc 1 104 0
+ 120 0078 B73F42E1 		strh	r3, [r2, #-247]	@ movhi
+ 108:calypso/spi.c **** 		reg_ctrl |= SPI_CTRL_RDWR;
+ 109:calypso/spi.c **** 	else
+ 110:calypso/spi.c **** 		reg_ctrl |= SPI_CTRL_WR;
+ 111:calypso/spi.c **** 	writew(reg_ctrl, SPI_REG(REG_CTRL));
+ 121              		.loc 1 111 0
+ 122 007c 78309FE5 		ldr	r3, .L23
+ 108:calypso/spi.c **** 		reg_ctrl |= SPI_CTRL_RDWR;
+ 123              		.loc 1 108 0
+ 124 0080 01008013 		orrne	r0, r0, #1
+ 125              	.LVL12:
+ 110:calypso/spi.c **** 		reg_ctrl |= SPI_CTRL_WR;
+ 126              		.loc 1 110 0
+ 127 0084 02008003 		orreq	r0, r0, #2
+ 128              	.LVL13:
+ 129              		.loc 1 111 0
+ 130 0088 BB0F43E1 		strh	r0, [r3, #-251]	@ movhi
+ 131              	.L13:
+ 112:calypso/spi.c **** 	printd("reg_ctrl=0x%04x ", reg_ctrl);
+ 113:calypso/spi.c **** 
+ 114:calypso/spi.c **** 	/* wait until the transfer is complete */
+ 115:calypso/spi.c **** 	while (1) {
+ 116:calypso/spi.c **** 		reg_status = readw(SPI_REG(REG_STATUS));
+ 132              		.loc 1 116 0
+ 133 008c B92F53E1 		ldrh	r2, [r3, #-249]
+ 117:calypso/spi.c **** 		printd("status=0x%04x ", reg_status);
+ 118:calypso/spi.c **** 		if (din && (reg_status & SPI_STATUS_RE))
+ 134              		.loc 1 118 0
+ 135 0090 000055E3 		cmp	r5, #0
+ 116:calypso/spi.c **** 		reg_status = readw(SPI_REG(REG_STATUS));
+ 136              		.loc 1 116 0
+ 137 0094 FF1002E2 		and	r1, r2, #255
+ 138              	.LVL14:
+ 139              		.loc 1 118 0
+ 140 0098 0100000A 		beq	.L11
+ 141              		.loc 1 118 0 is_stmt 0 discriminator 1
+ 142 009c 010012E3 		tst	r2, #1
+ 143 00a0 0100001A 		bne	.L12
+ 144              	.L11:
+ 119:calypso/spi.c **** 			break;
+ 120:calypso/spi.c **** 		else if (reg_status & SPI_STATUS_WE)
+ 145              		.loc 1 120 0 is_stmt 1
+ 146 00a4 020011E3 		tst	r1, #2
+ 147 00a8 F7FFFF0A 		beq	.L13
+ 148              	.L12:
+ 121:calypso/spi.c **** 			break;
+ 122:calypso/spi.c **** 	}
+ 123:calypso/spi.c **** 	/* FIXME: calibrate how much delay we really need (seven 13MHz cycles) */
+ 124:calypso/spi.c **** 	delay_ms(1);
+ 149              		.loc 1 124 0
+ 150 00ac 0100A0E3 		mov	r0, #1
+ 151              	.LVL15:
+ 152 00b0 FEFFFFEB 		bl	delay_ms
+ 153              	.LVL16:
+ 125:calypso/spi.c **** 
+ 126:calypso/spi.c **** 	if (din) {
+ 154              		.loc 1 126 0
+ 155 00b4 000055E3 		cmp	r5, #0
+ 156 00b8 0D00000A 		beq	.L19
+ 127:calypso/spi.c **** 		tmp = readw(SPI_REG(REG_RX_MSB)) << 16;
+ 157              		.loc 1 127 0
+ 158 00bc 38209FE5 		ldr	r2, .L23
+ 159 00c0 B11F52E1 		ldrh	r1, [r2, #-241]
+ 160              	.LVL17:
+ 128:calypso/spi.c **** 		tmp |= readw(SPI_REG(REG_RX_LSB));
+ 161              		.loc 1 128 0
+ 162 00c4 B33F52E1 		ldrh	r3, [r2, #-243]
+ 129:calypso/spi.c **** 		printd("data_in=0x%08x ", tmp);
+ 130:calypso/spi.c **** 
+ 131:calypso/spi.c **** 		if (bitlen <= 8)
+ 163              		.loc 1 131 0
+ 164 00c8 080054E3 		cmp	r4, #8
+ 128:calypso/spi.c **** 		tmp |= readw(SPI_REG(REG_RX_LSB));
+ 165              		.loc 1 128 0
+ 166 00cc 013883E1 		orr	r3, r3, r1, asl #16
+ 167              	.LVL18:
+ 132:calypso/spi.c **** 			*(uint8_t *)din = tmp & 0xff;
+ 168              		.loc 1 132 0
+ 169 00d0 0030C595 		strlsb	r3, [r5, #0]
+ 131:calypso/spi.c **** 		if (bitlen <= 8)
+ 170              		.loc 1 131 0
+ 171 00d4 0200009A 		bls	.L22
+ 133:calypso/spi.c **** 		else if (bitlen <= 16)
+ 172              		.loc 1 133 0
+ 173 00d8 100054E3 		cmp	r4, #16
+ 134:calypso/spi.c **** 			*(uint16_t *)din = tmp & 0xffff;
+ 174              		.loc 1 134 0
+ 175 00dc B030C591 		strlsh	r3, [r5, #0]	@ movhi
+ 135:calypso/spi.c **** 		else
+ 136:calypso/spi.c **** 			*(uint32_t *)din = tmp;
+ 176              		.loc 1 136 0
+ 177 00e0 00308585 		strhi	r3, [r5, #0]
+ 178              	.L22:
+ 137:calypso/spi.c **** 	}
+ 138:calypso/spi.c **** 	dputchar('\n');
+ 139:calypso/spi.c **** 
+ 140:calypso/spi.c **** 	return 0;
+ 179              		.loc 1 140 0
+ 180 00e4 0000A0E3 		mov	r0, #0
+ 181 00e8 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 182              	.LVL19:
+ 183              	.L18:
+  80:calypso/spi.c **** 		return -1;
+ 184              		.loc 1 80 0
+ 185 00ec 0000E0E3 		mvn	r0, #0
+ 186 00f0 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 187              	.LVL20:
+ 188              	.L19:
+ 189              		.loc 1 140 0
+ 190 00f4 0500A0E1 		mov	r0, r5
+ 141:calypso/spi.c **** }
+ 191              		.loc 1 141 0
+ 192 00f8 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 193              	.L24:
+ 194              		.align	2
+ 195              	.L23:
+ 196 00fc FF30FEFF 		.word	-118529
+ 197              		.cfi_endproc
+ 198              	.LFE1:
+ 200              		.text
+ 201              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 spi.c
+     /tmp/ccBZlsj3.s:12     .text.spi_init:0000000000000000 $a
+     /tmp/ccBZlsj3.s:15     .text.spi_init:0000000000000000 spi_init
+     /tmp/ccBZlsj3.s:35     .text.spi_init:0000000000000018 $d
+     /tmp/ccBZlsj3.s:40     .text.spi_xfer:0000000000000000 $a
+     /tmp/ccBZlsj3.s:43     .text.spi_xfer:0000000000000000 spi_xfer
+     /tmp/ccBZlsj3.s:196    .text.spi_xfer:00000000000000fc $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+delay_ms

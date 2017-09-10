@@ -1,0 +1,1216 @@
+   1              		.file	"tpu.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.tpu_wait_ctrl_bit,"ax",%progbits
+  12              		.align	2
+  14              	tpu_wait_ctrl_bit:
+  15              	.LFB9:
+  16              		.file 1 "calypso/tpu.c"
+   1:calypso/tpu.c **** /* Calypso DBB internal TPU (Time Processing Unit) Driver */
+   2:calypso/tpu.c **** 
+   3:calypso/tpu.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:calypso/tpu.c ****  *
+   5:calypso/tpu.c ****  * All Rights Reserved
+   6:calypso/tpu.c ****  *
+   7:calypso/tpu.c ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/tpu.c ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/tpu.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/tpu.c ****  * (at your option) any later version.
+  11:calypso/tpu.c ****  *
+  12:calypso/tpu.c ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/tpu.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/tpu.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/tpu.c ****  * GNU General Public License for more details.
+  16:calypso/tpu.c ****  *
+  17:calypso/tpu.c ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/tpu.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/tpu.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/tpu.c ****  *
+  21:calypso/tpu.c ****  */
+  22:calypso/tpu.c **** 
+  23:calypso/tpu.c **** #include <stdint.h>
+  24:calypso/tpu.c **** #include <stdio.h>
+  25:calypso/tpu.c **** 
+  26:calypso/tpu.c **** #include <debug.h>
+  27:calypso/tpu.c **** #include <delay.h>
+  28:calypso/tpu.c **** #include <memory.h>
+  29:calypso/tpu.c **** #include <calypso/tpu.h>
+  30:calypso/tpu.c **** #include <calypso/tsp.h>
+  31:calypso/tpu.c **** 
+  32:calypso/tpu.c **** /* Using TPU_DEBUG you will send special HLDC messages to the host PC
+  33:calypso/tpu.c ****  * containing the full TPU RAM content at the time you call tpu_enable() */
+  34:calypso/tpu.c **** //#define TPU_DEBUG
+  35:calypso/tpu.c **** 
+  36:calypso/tpu.c **** #define BASE_ADDR_TPU	0xffff1000
+  37:calypso/tpu.c **** #define TPU_REG(x)	(BASE_ADDR_TPU+(x))
+  38:calypso/tpu.c **** 
+  39:calypso/tpu.c **** #define BASE_ADDR_TPU_RAM	0xffff9000
+  40:calypso/tpu.c **** #define TPU_RAM_END		0xffff97ff
+  41:calypso/tpu.c **** 
+  42:calypso/tpu.c **** enum tpu_reg_arm {
+  43:calypso/tpu.c **** 	TPU_CTRL	= 0x0,	/* Control & Status Register */
+  44:calypso/tpu.c **** 	INT_CTRL	= 0x2,	/* Interrupt Control Register */
+  45:calypso/tpu.c **** 	INT_STAT	= 0x4,	/* Interrupt Status Register */
+  46:calypso/tpu.c **** 	TPU_OFFSET	= 0xC,	/* Offset operand value register */
+  47:calypso/tpu.c **** 	TPU_SYNCHRO	= 0xE,	/* synchro operand value register */
+  48:calypso/tpu.c **** 	IT_DSP_PG	= 0x20,
+  49:calypso/tpu.c **** };
+  50:calypso/tpu.c **** 
+  51:calypso/tpu.c **** enum tpu_ctrl_bits {
+  52:calypso/tpu.c **** 	TPU_CTRL_RESET		= (1 << 0),
+  53:calypso/tpu.c **** 	TPU_CTRL_PAGE		= (1 << 1),
+  54:calypso/tpu.c **** 	TPU_CTRL_EN		= (1 << 2),
+  55:calypso/tpu.c **** 	/* unused */
+  56:calypso/tpu.c **** 	TPU_CTRL_DSP_EN		= (1 << 4),
+  57:calypso/tpu.c **** 	/* unused */
+  58:calypso/tpu.c **** 	TPU_CTRL_MCU_RAM_ACC	= (1 << 6),
+  59:calypso/tpu.c **** 	TPU_CTRL_TSP_RESET	= (1 << 7),
+  60:calypso/tpu.c **** 	TPU_CTRL_IDLE		= (1 << 8),
+  61:calypso/tpu.c **** 	TPU_CTRL_WAIT		= (1 << 9),
+  62:calypso/tpu.c **** 	TPU_CTRL_CK_ENABLE	= (1 << 10),
+  63:calypso/tpu.c **** 	TPU_CTRL_FULL_WRITE	= (1 << 11),
+  64:calypso/tpu.c **** };
+  65:calypso/tpu.c **** 
+  66:calypso/tpu.c **** enum tpu_int_ctrl_bits {
+  67:calypso/tpu.c **** 	ICTRL_MCU_FRAME		= (1 << 0),
+  68:calypso/tpu.c **** 	ICTRL_MCU_PAGE		= (1 << 1),
+  69:calypso/tpu.c **** 	ICTRL_DSP_FRAME		= (1 << 2),
+  70:calypso/tpu.c **** 	ICTRL_DSP_FRAME_FORCE	= (1 << 3),
+  71:calypso/tpu.c **** };
+  72:calypso/tpu.c **** 
+  73:calypso/tpu.c **** static uint16_t *tpu_ptr = (uint16_t *)BASE_ADDR_TPU_RAM;
+  74:calypso/tpu.c **** 
+  75:calypso/tpu.c **** #ifdef TPU_DEBUG
+  76:calypso/tpu.c **** #include <comm/sercomm.h>
+  77:calypso/tpu.c **** #include <layer1/sync.h>
+  78:calypso/tpu.c **** static void tpu_ram_read_en(int enable)
+  79:calypso/tpu.c **** {
+  80:calypso/tpu.c **** 	uint16_t reg;
+  81:calypso/tpu.c **** 
+  82:calypso/tpu.c **** 	reg = readw(TPU_REG(TPU_CTRL));
+  83:calypso/tpu.c **** 	if (enable)
+  84:calypso/tpu.c **** 		reg |= TPU_CTRL_MCU_RAM_ACC;
+  85:calypso/tpu.c **** 	else
+  86:calypso/tpu.c **** 		reg &= ~TPU_CTRL_MCU_RAM_ACC;
+  87:calypso/tpu.c **** 	writew(reg, TPU_REG(TPU_CTRL));
+  88:calypso/tpu.c **** }
+  89:calypso/tpu.c **** 
+  90:calypso/tpu.c **** static void tpu_debug(void)
+  91:calypso/tpu.c **** {
+  92:calypso/tpu.c **** 	uint16_t *tpu_base = (uint16_t *)BASE_ADDR_TPU_RAM;
+  93:calypso/tpu.c **** 	unsigned int tpu_size = tpu_ptr - tpu_base;
+  94:calypso/tpu.c **** 	struct msgb *msg = sercomm_alloc_msgb(tpu_size*2);
+  95:calypso/tpu.c **** 	uint16_t *data;
+  96:calypso/tpu.c **** 	uint32_t *fn;
+  97:calypso/tpu.c **** 	uint16_t reg;
+  98:calypso/tpu.c **** 	int i;
+  99:calypso/tpu.c **** 
+ 100:calypso/tpu.c **** 	/* prepend tpu memory dump with frame number */
+ 101:calypso/tpu.c **** 	fn = (uint32_t *) msgb_put(msg, sizeof(fn));
+ 102:calypso/tpu.c **** 	*fn = l1s.current_time.fn;
+ 103:calypso/tpu.c **** 
+ 104:calypso/tpu.c **** 	tpu_ram_read_en(1);
+ 105:calypso/tpu.c **** 
+ 106:calypso/tpu.c **** 	data = (uint16_t *) msgb_put(msg, tpu_size*2);
+ 107:calypso/tpu.c **** 	for (i = 0; i < tpu_size; i ++)
+ 108:calypso/tpu.c **** 		data[i] = tpu_base[i];
+ 109:calypso/tpu.c **** 
+ 110:calypso/tpu.c **** 	tpu_ram_read_en(0);
+ 111:calypso/tpu.c **** 
+ 112:calypso/tpu.c **** 	sercomm_sendmsg(SC_DLCI_DEBUG, msg);
+ 113:calypso/tpu.c **** }
+ 114:calypso/tpu.c **** #else
+ 115:calypso/tpu.c **** static void tpu_debug(void) { }
+ 116:calypso/tpu.c **** #endif
+ 117:calypso/tpu.c **** 
+ 118:calypso/tpu.c **** #define BIT_SET	1
+ 119:calypso/tpu.c **** #define BIT_CLEAR 0
+ 120:calypso/tpu.c **** 
+ 121:calypso/tpu.c **** /* wait for a certain control bit to be set */
+ 122:calypso/tpu.c **** static int tpu_wait_ctrl_bit(uint16_t bit, int set)
+ 123:calypso/tpu.c **** {
+  17              		.loc 1 123 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  22 0000 04E02DE5 		str	lr, [sp, #-4]!
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 4
+ 124:calypso/tpu.c **** 	int timeout = 10*1000;
+  25              		.loc 1 124 0
+  26 0004 4C309FE5 		ldr	r3, .L10
+  27              	.LBB18:
+ 125:calypso/tpu.c **** 
+ 126:calypso/tpu.c **** 	while (1) {
+ 127:calypso/tpu.c **** 		uint16_t reg = readw(TPU_REG(TPU_CTRL));
+  28              		.loc 1 127 0
+  29 0008 EFCCE0E3 		mvn	ip, #61184
+  30              	.LVL1:
+  31              	.L5:
+  32 000c BF2F5CE1 		ldrh	r2, [ip, #-255]
+  33              	.LVL2:
+ 128:calypso/tpu.c **** 		if (set) {
+  34              		.loc 1 128 0
+  35 0010 000051E3 		cmp	r1, #0
+  36 0014 022000E0 		and	r2, r0, r2
+  37              	.LVL3:
+  38 0018 0200000A 		beq	.L2
+  39              		.cfi_offset 14, -4
+ 129:calypso/tpu.c **** 			if (reg & bit)
+  40              		.loc 1 129 0
+  41 001c 000052E3 		cmp	r2, #0
+  42 0020 0200000A 		beq	.L4
+  43 0024 070000EA 		b	.L9
+  44              	.L2:
+ 130:calypso/tpu.c **** 				break;
+ 131:calypso/tpu.c **** 		} else {
+ 132:calypso/tpu.c **** 			if (!(reg & bit))
+  45              		.loc 1 132 0
+  46 0028 000052E3 		cmp	r2, #0
+  47 002c 0700000A 		beq	.L7
+  48              	.L4:
+  49              	.LVL4:
+ 133:calypso/tpu.c **** 				break;
+ 134:calypso/tpu.c **** 		}
+ 135:calypso/tpu.c **** 		timeout--;
+ 136:calypso/tpu.c **** 		if (timeout <= 0) {
+  50              		.loc 1 136 0
+  51 0030 013053E2 		subs	r3, r3, #1
+  52              	.LVL5:
+  53 0034 F4FFFF1A 		bne	.L5
+ 137:calypso/tpu.c **** 			puts("Timeout while waiting for TPU ctrl bit!\n");
+  54              		.loc 1 137 0
+  55 0038 1C009FE5 		ldr	r0, .L10+4
+  56              	.LVL6:
+  57 003c FEFFFFEB 		bl	puts
+  58              	.LVL7:
+ 138:calypso/tpu.c **** 			return -1;
+  59              		.loc 1 138 0
+  60 0040 0000E0E3 		mvn	r0, #0
+  61 0044 04F09DE4 		ldr	pc, [sp], #4
+  62              	.LVL8:
+  63              	.L9:
+ 139:calypso/tpu.c **** 		}
+ 140:calypso/tpu.c **** 	}
+ 141:calypso/tpu.c **** 
+ 142:calypso/tpu.c **** 	return 0;
+  64              		.loc 1 142 0
+  65 0048 0000A0E3 		mov	r0, #0
+  66              	.LVL9:
+  67 004c 04F09DE4 		ldr	pc, [sp], #4
+  68              	.LVL10:
+  69              	.L7:
+  70 0050 0100A0E1 		mov	r0, r1
+  71              	.LVL11:
+  72              	.LBE18:
+ 143:calypso/tpu.c **** }
+  73              		.loc 1 143 0
+  74 0054 04F09DE4 		ldr	pc, [sp], #4
+  75              	.L11:
+  76              		.align	2
+  77              	.L10:
+  78 0058 10270000 		.word	10000
+  79 005c 00000000 		.word	.LC0
+  80              		.cfi_endproc
+  81              	.LFE9:
+  83              		.section	.text.tpu_reset,"ax",%progbits
+  84              		.align	2
+  85              		.global	tpu_reset
+  87              	tpu_reset:
+  88              	.LFB10:
+ 144:calypso/tpu.c **** 
+ 145:calypso/tpu.c **** /* assert or de-assert TPU reset */
+ 146:calypso/tpu.c **** void tpu_reset(int active)
+ 147:calypso/tpu.c **** {
+  89              		.loc 1 147 0
+  90              		.cfi_startproc
+  91              		@ args = 0, pretend = 0, frame = 0
+  92              		@ frame_needed = 0, uses_anonymous_args = 0
+  93              		@ link register save eliminated.
+  94              	.LVL12:
+ 148:calypso/tpu.c **** 	uint16_t reg;
+ 149:calypso/tpu.c **** 
+ 150:calypso/tpu.c **** 	printd("tpu_reset(%u)\n", active);
+ 151:calypso/tpu.c **** 	reg = readw(TPU_REG(TPU_CTRL));
+  95              		.loc 1 151 0
+  96 0000 EF3CE0E3 		mvn	r3, #61184
+ 152:calypso/tpu.c **** 	if (active) {
+  97              		.loc 1 152 0
+  98 0004 001050E2 		subs	r1, r0, #0
+ 151:calypso/tpu.c **** 	reg = readw(TPU_REG(TPU_CTRL));
+  99              		.loc 1 151 0
+ 100 0008 BF2F53E1 		ldrh	r2, [r3, #-255]
+ 101              	.LVL13:
+ 153:calypso/tpu.c **** 		reg |= (TPU_CTRL_RESET|TPU_CTRL_TSP_RESET);
+ 154:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 155:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_RESET, BIT_SET);
+ 102              		.loc 1 155 0
+ 103 000c 0100A013 		movne	r0, #1
+ 104              	.LVL14:
+ 153:calypso/tpu.c **** 		reg |= (TPU_CTRL_RESET|TPU_CTRL_TSP_RESET);
+ 105              		.loc 1 153 0
+ 106 0010 81208213 		orrne	r2, r2, #129
+ 107              	.LVL15:
+ 156:calypso/tpu.c **** 	} else {
+ 157:calypso/tpu.c **** 		reg &= ~(TPU_CTRL_RESET|TPU_CTRL_TSP_RESET);
+ 108              		.loc 1 157 0
+ 109 0014 8120C203 		biceq	r2, r2, #129
+ 110              	.LVL16:
+ 155:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_RESET, BIT_SET);
+ 111              		.loc 1 155 0
+ 112 0018 0010A011 		movne	r1, r0
+ 113              	.LVL17:
+ 158:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 159:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_RESET, BIT_CLEAR);
+ 114              		.loc 1 159 0
+ 115 001c 0100A003 		moveq	r0, #1
+ 154:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 116              		.loc 1 154 0
+ 117 0020 BF2F4311 		strneh	r2, [r3, #-255]	@ movhi
+ 158:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 118              		.loc 1 158 0
+ 119 0024 BF2F4301 		streqh	r2, [r3, #-255]	@ movhi
+ 160:calypso/tpu.c **** 	}
+ 161:calypso/tpu.c **** }
+ 120              		.loc 1 161 0
+ 159:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_RESET, BIT_CLEAR);
+ 121              		.loc 1 159 0
+ 122 0028 FEFFFFEA 		b	tpu_wait_ctrl_bit
+ 123              		.cfi_endproc
+ 124              	.LFE10:
+ 126              		.section	.text.tpu_enable,"ax",%progbits
+ 127              		.align	2
+ 128              		.global	tpu_enable
+ 130              	tpu_enable:
+ 131              	.LFB11:
+ 162:calypso/tpu.c **** 
+ 163:calypso/tpu.c **** /* Enable or Disable a new scenario loaded into the TPU */
+ 164:calypso/tpu.c **** void tpu_enable(int active)
+ 165:calypso/tpu.c **** {
+ 132              		.loc 1 165 0
+ 133              		.cfi_startproc
+ 134              		@ args = 0, pretend = 0, frame = 0
+ 135              		@ frame_needed = 0, uses_anonymous_args = 0
+ 136              		@ link register save eliminated.
+ 137              	.LVL18:
+ 166:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 138              		.loc 1 166 0
+ 139 0000 EF3CE0E3 		mvn	r3, #61184
+ 140 0004 BF3F53E1 		ldrh	r3, [r3, #-255]
+ 141              	.LVL19:
+ 167:calypso/tpu.c **** 
+ 168:calypso/tpu.c **** 	printd("tpu_enable(%u)\n", active);
+ 169:calypso/tpu.c **** 
+ 170:calypso/tpu.c **** 	tpu_debug();
+ 171:calypso/tpu.c **** 
+ 172:calypso/tpu.c **** 	if (active)
+ 142              		.loc 1 172 0
+ 143 0008 000050E3 		cmp	r0, #0
+ 173:calypso/tpu.c **** 		reg |= TPU_CTRL_EN;
+ 144              		.loc 1 173 0
+ 145 000c 04308313 		orrne	r3, r3, #4
+ 146              	.LVL20:
+ 174:calypso/tpu.c **** 	else
+ 175:calypso/tpu.c **** 		reg &= ~TPU_CTRL_EN;
+ 147              		.loc 1 175 0
+ 148 0010 0430C303 		biceq	r3, r3, #4
+ 149              	.LVL21:
+ 176:calypso/tpu.c **** 	writew(reg, TPU_REG(TPU_CTRL));
+ 150              		.loc 1 176 0
+ 151 0014 EF2CE0E3 		mvn	r2, #61184
+ 152 0018 BF3F42E1 		strh	r3, [r2, #-255]	@ movhi
+ 153              	.LBB19:
+ 154              	.LBB20:
+ 177:calypso/tpu.c **** 
+ 178:calypso/tpu.c **** 	/* After the new scenario is loaded, TPU switches the MCU-visible memory
+ 179:calypso/tpu.c **** 	 * page, i.e. we can write without any danger */
+ 180:calypso/tpu.c **** 	tpu_rewind();
+ 181:calypso/tpu.c **** #if 0
+ 182:calypso/tpu.c **** 	{
+ 183:calypso/tpu.c **** 		int i;
+ 184:calypso/tpu.c **** 		uint16_t oldreg = 0;
+ 185:calypso/tpu.c **** 
+ 186:calypso/tpu.c **** 		for (i = 0; i < 100000; i++) {
+ 187:calypso/tpu.c **** 			reg = readw(TPU_REG(TPU_CTRL));
+ 188:calypso/tpu.c **** 			if (i == 0 || oldreg != reg) {
+ 189:calypso/tpu.c **** 				printd("%d TPU state: 0x%04x\n", i, reg);
+ 190:calypso/tpu.c **** 			}
+ 191:calypso/tpu.c **** 			oldreg = reg;
+ 192:calypso/tpu.c **** 		}
+ 193:calypso/tpu.c **** 	}
+ 194:calypso/tpu.c **** #endif
+ 195:calypso/tpu.c **** }
+ 196:calypso/tpu.c **** 
+ 197:calypso/tpu.c **** /* Enable or Disable the clock of the TPU Module */
+ 198:calypso/tpu.c **** void tpu_clk_enable(int active)
+ 199:calypso/tpu.c **** {
+ 200:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 201:calypso/tpu.c **** 
+ 202:calypso/tpu.c **** 	printd("tpu_clk_enable(%u)\n", active);
+ 203:calypso/tpu.c **** 	if (active) {
+ 204:calypso/tpu.c **** 		reg |= TPU_CTRL_CK_ENABLE;
+ 205:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 206:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_CK_ENABLE, BIT_SET);
+ 207:calypso/tpu.c **** 	} else {
+ 208:calypso/tpu.c **** 		reg &= ~TPU_CTRL_CK_ENABLE;
+ 209:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 210:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_CK_ENABLE, BIT_CLEAR);
+ 211:calypso/tpu.c **** 	}
+ 212:calypso/tpu.c **** }
+ 213:calypso/tpu.c **** 
+ 214:calypso/tpu.c **** /* Enable Frame Interrupt generation on next frame.  DSP will reset it */
+ 215:calypso/tpu.c **** void tpu_dsp_frameirq_enable(void)
+ 216:calypso/tpu.c **** {
+ 217:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 218:calypso/tpu.c **** 	reg |= TPU_CTRL_DSP_EN;
+ 219:calypso/tpu.c **** 	writew(reg, TPU_REG(TPU_CTRL));
+ 220:calypso/tpu.c **** 
+ 221:calypso/tpu.c **** 	tpu_wait_ctrl_bit(TPU_CTRL_DSP_EN, BIT_SET);
+ 222:calypso/tpu.c **** }
+ 223:calypso/tpu.c **** 
+ 224:calypso/tpu.c **** /* Is a Frame interrupt still pending for the DSP ? */
+ 225:calypso/tpu.c **** int tpu_dsp_fameirq_pending(void)
+ 226:calypso/tpu.c **** {
+ 227:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 228:calypso/tpu.c **** 
+ 229:calypso/tpu.c **** 	if (reg & TPU_CTRL_DSP_EN)
+ 230:calypso/tpu.c **** 		return 1;
+ 231:calypso/tpu.c **** 
+ 232:calypso/tpu.c **** 	return 0;
+ 233:calypso/tpu.c **** }
+ 234:calypso/tpu.c **** 
+ 235:calypso/tpu.c **** void tpu_rewind(void)
+ 236:calypso/tpu.c **** {
+ 237:calypso/tpu.c **** 	dputs("tpu_rewind()\n");
+ 238:calypso/tpu.c **** 	tpu_ptr = (uint16_t *) BASE_ADDR_TPU_RAM;
+ 155              		.loc 1 238 0
+ 156 001c 08209FE5 		ldr	r2, .L18
+ 157 0020 08309FE5 		ldr	r3, .L18+4
+ 158              	.LVL22:
+ 159 0024 002083E5 		str	r2, [r3, #0]
+ 160              	.LBE20:
+ 161              	.LBE19:
+ 195:calypso/tpu.c **** }
+ 162              		.loc 1 195 0
+ 163 0028 1EFF2FE1 		bx	lr
+ 164              	.L19:
+ 165              		.align	2
+ 166              	.L18:
+ 167 002c 0090FFFF 		.word	-28672
+ 168 0030 00000000 		.word	.LANCHOR0
+ 169              		.cfi_endproc
+ 170              	.LFE11:
+ 172              		.section	.text.tpu_clk_enable,"ax",%progbits
+ 173              		.align	2
+ 174              		.global	tpu_clk_enable
+ 176              	tpu_clk_enable:
+ 177              	.LFB12:
+ 199:calypso/tpu.c **** {
+ 178              		.loc 1 199 0
+ 179              		.cfi_startproc
+ 180              		@ args = 0, pretend = 0, frame = 0
+ 181              		@ frame_needed = 0, uses_anonymous_args = 0
+ 182              		@ link register save eliminated.
+ 183              	.LVL23:
+ 200:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 184              		.loc 1 200 0
+ 185 0000 EF3CE0E3 		mvn	r3, #61184
+ 186 0004 BF2F53E1 		ldrh	r2, [r3, #-255]
+ 187              	.LVL24:
+ 203:calypso/tpu.c **** 	if (active) {
+ 188              		.loc 1 203 0
+ 189 0008 001050E2 		subs	r1, r0, #0
+ 204:calypso/tpu.c **** 		reg |= TPU_CTRL_CK_ENABLE;
+ 190              		.loc 1 204 0
+ 191 000c 012B8213 		orrne	r2, r2, #1024
+ 192              	.LVL25:
+ 208:calypso/tpu.c **** 		reg &= ~TPU_CTRL_CK_ENABLE;
+ 193              		.loc 1 208 0
+ 194 0010 012BC203 		biceq	r2, r2, #1024
+ 195              	.LVL26:
+ 206:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_CK_ENABLE, BIT_SET);
+ 196              		.loc 1 206 0
+ 197 0014 010BA013 		movne	r0, #1024
+ 198              	.LVL27:
+ 199 0018 0110A013 		movne	r1, #1
+ 200              	.LVL28:
+ 210:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_CK_ENABLE, BIT_CLEAR);
+ 201              		.loc 1 210 0
+ 202 001c 010BA003 		moveq	r0, #1024
+ 205:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 203              		.loc 1 205 0
+ 204 0020 BF2F4311 		strneh	r2, [r3, #-255]	@ movhi
+ 209:calypso/tpu.c **** 		writew(reg, TPU_REG(TPU_CTRL));
+ 205              		.loc 1 209 0
+ 206 0024 BF2F4301 		streqh	r2, [r3, #-255]	@ movhi
+ 212:calypso/tpu.c **** }
+ 207              		.loc 1 212 0
+ 210:calypso/tpu.c **** 		tpu_wait_ctrl_bit(TPU_CTRL_CK_ENABLE, BIT_CLEAR);
+ 208              		.loc 1 210 0
+ 209 0028 FEFFFFEA 		b	tpu_wait_ctrl_bit
+ 210              		.cfi_endproc
+ 211              	.LFE12:
+ 213              		.section	.text.tpu_dsp_frameirq_enable,"ax",%progbits
+ 214              		.align	2
+ 215              		.global	tpu_dsp_frameirq_enable
+ 217              	tpu_dsp_frameirq_enable:
+ 218              	.LFB13:
+ 216:calypso/tpu.c **** {
+ 219              		.loc 1 216 0
+ 220              		.cfi_startproc
+ 221              		@ args = 0, pretend = 0, frame = 0
+ 222              		@ frame_needed = 0, uses_anonymous_args = 0
+ 223              		@ link register save eliminated.
+ 217:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 224              		.loc 1 217 0
+ 225 0000 EF3CE0E3 		mvn	r3, #61184
+ 226 0004 BF2F53E1 		ldrh	r2, [r3, #-255]
+ 227              	.LVL29:
+ 221:calypso/tpu.c **** 	tpu_wait_ctrl_bit(TPU_CTRL_DSP_EN, BIT_SET);
+ 228              		.loc 1 221 0
+ 229 0008 1000A0E3 		mov	r0, #16
+ 218:calypso/tpu.c **** 	reg |= TPU_CTRL_DSP_EN;
+ 230              		.loc 1 218 0
+ 231 000c 102082E3 		orr	r2, r2, #16
+ 232              	.LVL30:
+ 221:calypso/tpu.c **** 	tpu_wait_ctrl_bit(TPU_CTRL_DSP_EN, BIT_SET);
+ 233              		.loc 1 221 0
+ 234 0010 0110A0E3 		mov	r1, #1
+ 219:calypso/tpu.c **** 	writew(reg, TPU_REG(TPU_CTRL));
+ 235              		.loc 1 219 0
+ 236 0014 BF2F43E1 		strh	r2, [r3, #-255]	@ movhi
+ 222:calypso/tpu.c **** }
+ 237              		.loc 1 222 0
+ 221:calypso/tpu.c **** 	tpu_wait_ctrl_bit(TPU_CTRL_DSP_EN, BIT_SET);
+ 238              		.loc 1 221 0
+ 239 0018 FEFFFFEA 		b	tpu_wait_ctrl_bit
+ 240              		.cfi_endproc
+ 241              	.LFE13:
+ 243              		.section	.text.tpu_dsp_fameirq_pending,"ax",%progbits
+ 244              		.align	2
+ 245              		.global	tpu_dsp_fameirq_pending
+ 247              	tpu_dsp_fameirq_pending:
+ 248              	.LFB14:
+ 226:calypso/tpu.c **** {
+ 249              		.loc 1 226 0
+ 250              		.cfi_startproc
+ 251              		@ args = 0, pretend = 0, frame = 0
+ 252              		@ frame_needed = 0, uses_anonymous_args = 0
+ 253              		@ link register save eliminated.
+ 227:calypso/tpu.c **** 	uint16_t reg = readw(TPU_REG(TPU_CTRL));
+ 254              		.loc 1 227 0
+ 255 0000 EF3CE0E3 		mvn	r3, #61184
+ 256 0004 BF3F53E1 		ldrh	r3, [r3, #-255]
+ 257              	.LVL31:
+ 230:calypso/tpu.c **** 		return 1;
+ 258              		.loc 1 230 0
+ 259 0008 100013E3 		tst	r3, #16
+ 233:calypso/tpu.c **** }
+ 260              		.loc 1 233 0
+ 261 000c 0000A003 		moveq	r0, #0
+ 262 0010 0100A013 		movne	r0, #1
+ 263 0014 1EFF2FE1 		bx	lr
+ 264              		.cfi_endproc
+ 265              	.LFE14:
+ 267              		.section	.text.tpu_rewind,"ax",%progbits
+ 268              		.align	2
+ 269              		.global	tpu_rewind
+ 271              	tpu_rewind:
+ 272              	.LFB15:
+ 236:calypso/tpu.c **** {
+ 273              		.loc 1 236 0
+ 274              		.cfi_startproc
+ 275              		@ args = 0, pretend = 0, frame = 0
+ 276              		@ frame_needed = 0, uses_anonymous_args = 0
+ 277              		@ link register save eliminated.
+ 278              		.loc 1 238 0
+ 279 0000 08209FE5 		ldr	r2, .L26
+ 280 0004 08309FE5 		ldr	r3, .L26+4
+ 281 0008 002083E5 		str	r2, [r3, #0]
+ 239:calypso/tpu.c **** }
+ 282              		.loc 1 239 0
+ 283 000c 1EFF2FE1 		bx	lr
+ 284              	.L27:
+ 285              		.align	2
+ 286              	.L26:
+ 287 0010 0090FFFF 		.word	-28672
+ 288 0014 00000000 		.word	.LANCHOR0
+ 289              		.cfi_endproc
+ 290              	.LFE15:
+ 292              		.section	.text.tpu_enqueue,"ax",%progbits
+ 293              		.align	2
+ 294              		.global	tpu_enqueue
+ 296              	tpu_enqueue:
+ 297              	.LFB16:
+ 240:calypso/tpu.c **** 
+ 241:calypso/tpu.c **** void tpu_enqueue(uint16_t instr)
+ 242:calypso/tpu.c **** {
+ 298              		.loc 1 242 0
+ 299              		.cfi_startproc
+ 300              		@ args = 0, pretend = 0, frame = 0
+ 301              		@ frame_needed = 0, uses_anonymous_args = 0
+ 302              		@ link register save eliminated.
+ 303              	.LVL32:
+ 243:calypso/tpu.c **** 	printd("tpu_enqueue(tpu_ptr=%p, instr=0x%04x)\n", tpu_ptr, instr);
+ 244:calypso/tpu.c **** 	*tpu_ptr++ = instr;
+ 304              		.loc 1 244 0
+ 305 0000 18209FE5 		ldr	r2, .L30
+ 306 0004 003092E5 		ldr	r3, [r2, #0]
+ 307 0008 B200C3E0 		strh	r0, [r3], #2	@ movhi
+ 245:calypso/tpu.c **** 	if (tpu_ptr > (uint16_t *) TPU_RAM_END)
+ 308              		.loc 1 245 0
+ 309 000c 1A0B73E3 		cmn	r3, #26624
+ 244:calypso/tpu.c **** 	*tpu_ptr++ = instr;
+ 310              		.loc 1 244 0
+ 311 0010 003082E5 		str	r3, [r2, #0]
+ 312              		.loc 1 245 0
+ 313 0014 1EFF2F31 		bxcc	lr
+ 246:calypso/tpu.c **** 		puts("TPU enqueue beyond end of TPU memory\n");
+ 314              		.loc 1 246 0
+ 315 0018 04009FE5 		ldr	r0, .L30+4
+ 316              	.LVL33:
+ 247:calypso/tpu.c **** }
+ 317              		.loc 1 247 0
+ 246:calypso/tpu.c **** 		puts("TPU enqueue beyond end of TPU memory\n");
+ 318              		.loc 1 246 0
+ 319 001c FEFFFFEA 		b	puts
+ 320              	.LVL34:
+ 321              	.L31:
+ 322              		.align	2
+ 323              	.L30:
+ 324 0020 00000000 		.word	.LANCHOR0
+ 325 0024 29000000 		.word	.LC1
+ 326              		.cfi_endproc
+ 327              	.LFE16:
+ 329              		.section	.text.tpu_init,"ax",%progbits
+ 330              		.align	2
+ 331              		.global	tpu_init
+ 333              	tpu_init:
+ 334              	.LFB17:
+ 248:calypso/tpu.c **** 
+ 249:calypso/tpu.c **** void tpu_init(void)
+ 250:calypso/tpu.c **** {
+ 335              		.loc 1 250 0
+ 336              		.cfi_startproc
+ 337              		@ args = 0, pretend = 0, frame = 0
+ 338              		@ frame_needed = 0, uses_anonymous_args = 0
+ 339 0000 04E02DE5 		str	lr, [sp, #-4]!
+ 340              	.LCFI1:
+ 341              		.cfi_def_cfa_offset 4
+ 251:calypso/tpu.c **** 	uint16_t *ptr;
+ 252:calypso/tpu.c **** 
+ 253:calypso/tpu.c **** 	/* Put TPU into Reset and enable clock */
+ 254:calypso/tpu.c **** 	tpu_reset(1);
+ 342              		.loc 1 254 0
+ 343 0004 0100A0E3 		mov	r0, #1
+ 344              		.cfi_offset 14, -4
+ 345 0008 FEFFFFEB 		bl	tpu_reset
+ 255:calypso/tpu.c **** 	tpu_clk_enable(1);
+ 346              		.loc 1 255 0
+ 347 000c 0100A0E3 		mov	r0, #1
+ 348 0010 FEFFFFEB 		bl	tpu_clk_enable
+ 349              	.LVL35:
+ 256:calypso/tpu.c **** 
+ 257:calypso/tpu.c **** 	/* set all TPU RAM to zero */
+ 258:calypso/tpu.c **** 	for (ptr = (uint16_t *) BASE_ADDR_TPU_RAM; ptr < (uint16_t *) TPU_RAM_END; ptr++)
+ 350              		.loc 1 258 0
+ 351 0014 40309FE5 		ldr	r3, .L35
+ 352              	.LVL36:
+ 353              	.L33:
+ 259:calypso/tpu.c **** 		*ptr = 0x0000;
+ 354              		.loc 1 259 0 discriminator 2
+ 355 0018 0020A0E3 		mov	r2, #0	@ movhi
+ 356 001c B220C3E0 		strh	r2, [r3], #2	@ movhi
+ 357              	.LVL37:
+ 258:calypso/tpu.c **** 	for (ptr = (uint16_t *) BASE_ADDR_TPU_RAM; ptr < (uint16_t *) TPU_RAM_END; ptr++)
+ 358              		.loc 1 258 0 discriminator 2
+ 359 0020 1A0B73E3 		cmn	r3, #26624
+ 360 0024 FBFFFF1A 		bne	.L33
+ 260:calypso/tpu.c **** 
+ 261:calypso/tpu.c **** 	/* Get TPU out of reset */
+ 262:calypso/tpu.c **** 	tpu_reset(0);
+ 361              		.loc 1 262 0
+ 362 0028 0000A0E3 		mov	r0, #0
+ 363 002c FEFFFFEB 		bl	tpu_reset
+ 364              	.LVL38:
+ 263:calypso/tpu.c **** 	/* Disable all interrupts */
+ 264:calypso/tpu.c **** 	writeb(0x7, TPU_REG(INT_CTRL));
+ 365              		.loc 1 264 0
+ 366 0030 0720A0E3 		mov	r2, #7
+ 367 0034 EF3CE0E3 		mvn	r3, #61184
+ 368 0038 FD2043E5 		strb	r2, [r3, #-253]
+ 369              	.LBB21:
+ 370              	.LBB22:
+ 238:calypso/tpu.c **** 	tpu_ptr = (uint16_t *) BASE_ADDR_TPU_RAM;
+ 371              		.loc 1 238 0
+ 372 003c 18209FE5 		ldr	r2, .L35
+ 373 0040 18309FE5 		ldr	r3, .L35+4
+ 374              	.LBE22:
+ 375              	.LBE21:
+ 376              	.LBB24:
+ 377              	.LBB25:
+ 378              		.file 2 "include/calypso/tpu.h"
+   1:include/calypso/tpu.h **** #ifndef _CALYPSO_TPU_H
+   2:include/calypso/tpu.h **** #define _CALYPSO_TPU_H
+   3:include/calypso/tpu.h **** 
+   4:include/calypso/tpu.h **** #define BITS_PER_TDMA		1250
+   5:include/calypso/tpu.h **** #define QBITS_PER_TDMA		(BITS_PER_TDMA * 4)	/* 5000 */
+   6:include/calypso/tpu.h **** #define TPU_RANGE		QBITS_PER_TDMA
+   7:include/calypso/tpu.h **** #define	SWITCH_TIME		(TPU_RANGE-10)
+   8:include/calypso/tpu.h **** 
+   9:include/calypso/tpu.h **** /* Assert or de-assert TPU reset */
+  10:include/calypso/tpu.h **** void tpu_reset(int active);
+  11:include/calypso/tpu.h **** /* Enable or Disable a new scenario loaded into the TPU */
+  12:include/calypso/tpu.h **** void tpu_enable(int active);
+  13:include/calypso/tpu.h **** /* Enable or Disable the clock of the TPU Module */
+  14:include/calypso/tpu.h **** void tpu_clk_enable(int active);
+  15:include/calypso/tpu.h **** /* Enable Frame Interrupt generation on next frame.  DSP will reset it */
+  16:include/calypso/tpu.h **** void tpu_dsp_frameirq_enable(void);
+  17:include/calypso/tpu.h **** /* Is a Frame interrupt still pending for the DSP ? */
+  18:include/calypso/tpu.h **** int tpu_dsp_fameirq_pending(void);
+  19:include/calypso/tpu.h **** /* Rewind the TPU, i.e. restart enqueueing instructions at the base addr */
+  20:include/calypso/tpu.h **** void tpu_rewind(void);
+  21:include/calypso/tpu.h **** /* Enqueue a raw TPU instruction */
+  22:include/calypso/tpu.h **** void tpu_enqueue(uint16_t instr);
+  23:include/calypso/tpu.h **** /* Initialize TPU and TPU driver */
+  24:include/calypso/tpu.h **** void tpu_init(void);
+  25:include/calypso/tpu.h **** /* (Busy)Wait until TPU is idle */
+  26:include/calypso/tpu.h **** void tpu_wait_idle(void);
+  27:include/calypso/tpu.h **** /* Enable FRAME interrupt generation */
+  28:include/calypso/tpu.h **** void tpu_frame_irq_en(int mcu, int dsp);
+  29:include/calypso/tpu.h **** /* Force the generation of a DSP interrupt */
+  30:include/calypso/tpu.h **** void tpu_force_dsp_frame_irq(void);
+  31:include/calypso/tpu.h **** 
+  32:include/calypso/tpu.h **** /* Get the current TPU SYNCHRO register */
+  33:include/calypso/tpu.h **** uint16_t tpu_get_synchro(void);
+  34:include/calypso/tpu.h **** /* Get the current TPU OFFSET register */
+  35:include/calypso/tpu.h **** uint16_t tpu_get_offset(void);
+  36:include/calypso/tpu.h **** 
+  37:include/calypso/tpu.h **** enum tpu_instr {
+  38:include/calypso/tpu.h **** 	TPU_INSTR_AT		= (1 << 13),
+  39:include/calypso/tpu.h **** 	TPU_INSTR_OFFSET	= (2 << 13),
+  40:include/calypso/tpu.h **** 	TPU_INSTR_SYNCHRO	= (3 << 13),	/* Loading delta synchro value in TPU synchro register */
+  41:include/calypso/tpu.h **** 	TPU_INSTR_WAIT		= (5 << 13),	/* Wait a certain period (in GSM qbits) */
+  42:include/calypso/tpu.h **** 	TPU_INSTR_SLEEP		= (0 << 13),	/* Stop the sequencer by disabling TPU ENABLE bit in ctrl reg */
+  43:include/calypso/tpu.h **** 	/* data processing */
+  44:include/calypso/tpu.h **** 	TPU_INSTR_MOVE		= (4 << 13),
+  45:include/calypso/tpu.h **** };
+  46:include/calypso/tpu.h **** 
+  47:include/calypso/tpu.h **** /* Addresses internal to the TPU, only accessible via MOVE */
+  48:include/calypso/tpu.h **** enum tpu_reg_int {
+  49:include/calypso/tpu.h **** 	TPUI_TSP_CTRL1	= 0x00,
+  50:include/calypso/tpu.h **** 	TPUI_TSP_CTRL2	= 0x01,
+  51:include/calypso/tpu.h **** 	TPUI_TX_1	= 0x04,
+  52:include/calypso/tpu.h **** 	TPUI_TX_2	= 0x03,
+  53:include/calypso/tpu.h **** 	TPUI_TX_3	= 0x02,
+  54:include/calypso/tpu.h **** 	TPUI_TX_4	= 0x05,
+  55:include/calypso/tpu.h **** 	TPUI_TSP_ACT_L	= 0x06,
+  56:include/calypso/tpu.h **** 	TPUI_TSP_ACT_U	= 0x07,
+  57:include/calypso/tpu.h **** 	TPUI_TSP_SET1	= 0x09,
+  58:include/calypso/tpu.h **** 	TPUI_TSP_SET2	= 0x0a,
+  59:include/calypso/tpu.h **** 	TPUI_TSP_SET3	= 0x0b,
+  60:include/calypso/tpu.h **** 	TPUI_DSP_INT_PG	= 0x10,
+  61:include/calypso/tpu.h **** 	TPUI_GAUGING_EN = 0x11,
+  62:include/calypso/tpu.h **** };
+  63:include/calypso/tpu.h **** 
+  64:include/calypso/tpu.h **** enum tpui_ctrl2_bits {
+  65:include/calypso/tpu.h **** 	TPUI_CTRL2_RD		= (1 << 0),
+  66:include/calypso/tpu.h **** 	TPUI_CTRL2_WR		= (1 << 1),
+  67:include/calypso/tpu.h **** };
+  68:include/calypso/tpu.h **** 
+  69:include/calypso/tpu.h **** static inline uint16_t tpu_mod5000(int16_t time)
+  70:include/calypso/tpu.h **** {
+  71:include/calypso/tpu.h **** 	if (time < 0)
+  72:include/calypso/tpu.h **** 		return time + 5000;
+  73:include/calypso/tpu.h **** 	if (time >= 5000)
+  74:include/calypso/tpu.h **** 		return time - 5000;
+  75:include/calypso/tpu.h **** 	return time;
+  76:include/calypso/tpu.h **** }
+  77:include/calypso/tpu.h **** 
+  78:include/calypso/tpu.h **** /* Enqueue a SLEEP operation (stop sequencer by disabling TPU ENABLE bit) */
+  79:include/calypso/tpu.h **** static inline void tpu_enq_sleep(void)
+  80:include/calypso/tpu.h **** {
+  81:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SLEEP);
+  82:include/calypso/tpu.h **** }
+  83:include/calypso/tpu.h **** 
+  84:include/calypso/tpu.h **** /* Enqueue a MOVE operation */
+  85:include/calypso/tpu.h **** static inline void tpu_enq_move(uint8_t addr, uint8_t data)
+  86:include/calypso/tpu.h **** {
+  87:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_MOVE | (data << 5) | (addr & 0x1f));
+  88:include/calypso/tpu.h **** }
+  89:include/calypso/tpu.h **** 
+  90:include/calypso/tpu.h **** /* Enqueue an AT operation */
+  91:include/calypso/tpu.h **** static inline void tpu_enq_at(int16_t time)
+  92:include/calypso/tpu.h **** {
+  93:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_AT | tpu_mod5000(time));
+  94:include/calypso/tpu.h **** }
+  95:include/calypso/tpu.h **** 
+  96:include/calypso/tpu.h **** /* Enqueue a SYNC operation */
+  97:include/calypso/tpu.h **** static inline void tpu_enq_sync(int16_t time)
+  98:include/calypso/tpu.h **** {
+  99:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SYNCHRO | time);
+ 100:include/calypso/tpu.h **** }
+ 101:include/calypso/tpu.h **** 
+ 102:include/calypso/tpu.h **** /* Enqueue a WAIT operation */
+ 103:include/calypso/tpu.h **** static inline void tpu_enq_wait(int16_t time)
+ 104:include/calypso/tpu.h **** {
+ 105:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_WAIT | time);
+ 106:include/calypso/tpu.h **** }
+ 107:include/calypso/tpu.h **** 
+ 108:include/calypso/tpu.h **** /* Enqueue an OFFSET operation */
+ 109:include/calypso/tpu.h **** static inline void tpu_enq_offset(int16_t time)
+ 110:include/calypso/tpu.h **** {
+ 111:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_OFFSET | time);
+ 379              		.loc 2 111 0
+ 380 0044 0109A0E3 		mov	r0, #16384
+ 381              	.LBE25:
+ 382              	.LBE24:
+ 383              	.LBB27:
+ 384              	.LBB23:
+ 238:calypso/tpu.c **** 	tpu_ptr = (uint16_t *) BASE_ADDR_TPU_RAM;
+ 385              		.loc 1 238 0
+ 386 0048 002083E5 		str	r2, [r3, #0]
+ 387              	.LVL39:
+ 388              	.LBE23:
+ 389              	.LBE27:
+ 390              	.LBB28:
+ 391              	.LBB26:
+ 392              		.loc 2 111 0
+ 393 004c FEFFFFEB 		bl	tpu_enqueue
+ 394              	.LVL40:
+ 395              	.LBE26:
+ 396              	.LBE28:
+ 397              	.LBB29:
+ 398              	.LBB30:
+  99:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SYNCHRO | time);
+ 399              		.loc 2 99 0
+ 400 0050 060AA0E3 		mov	r0, #24576
+ 401              	.LBE30:
+ 402              	.LBE29:
+ 265:calypso/tpu.c **** 
+ 266:calypso/tpu.c **** 	tpu_rewind();
+ 267:calypso/tpu.c **** 	tpu_enq_offset(0);
+ 268:calypso/tpu.c **** 	tpu_enq_sync(0);
+ 269:calypso/tpu.c **** }
+ 403              		.loc 1 269 0
+ 404 0054 04E09DE4 		ldr	lr, [sp], #4
+ 405              	.LBB32:
+ 406              	.LBB31:
+  99:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SYNCHRO | time);
+ 407              		.loc 2 99 0
+ 408 0058 FEFFFFEA 		b	tpu_enqueue
+ 409              	.L36:
+ 410              		.align	2
+ 411              	.L35:
+ 412 005c 0090FFFF 		.word	-28672
+ 413 0060 00000000 		.word	.LANCHOR0
+ 414              	.LBE31:
+ 415              	.LBE32:
+ 416              		.cfi_endproc
+ 417              	.LFE17:
+ 419              		.section	.text.tpu_test,"ax",%progbits
+ 420              		.align	2
+ 421              		.global	tpu_test
+ 423              	tpu_test:
+ 424              	.LFB18:
+ 270:calypso/tpu.c **** 
+ 271:calypso/tpu.c **** void tpu_test(void)
+ 272:calypso/tpu.c **** {
+ 425              		.loc 1 272 0
+ 426              		.cfi_startproc
+ 427              		@ args = 0, pretend = 0, frame = 0
+ 428              		@ frame_needed = 0, uses_anonymous_args = 0
+ 429              	.LVL41:
+ 430 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 431              	.LCFI2:
+ 432              		.cfi_def_cfa_offset 8
+ 433              		.loc 1 272 0
+ 434 0004 0A40A0E3 		mov	r4, #10
+ 435              		.cfi_offset 14, -4
+ 436              		.cfi_offset 4, -8
+ 437              	.LVL42:
+ 438              	.L38:
+ 273:calypso/tpu.c **** 	int i;
+ 274:calypso/tpu.c **** 
+ 275:calypso/tpu.c **** 	/* program a sequence of TSPACT events into the TPU */
+ 276:calypso/tpu.c **** 	for (i = 0; i < 10; i++) {
+ 277:calypso/tpu.c **** 		puts("TSP ACT enable: ");
+ 439              		.loc 1 277 0 discriminator 2
+ 440 0008 44009FE5 		ldr	r0, .L40
+ 441 000c FEFFFFEB 		bl	puts
+ 278:calypso/tpu.c **** 		tsp_act_enable(0x0001);
+ 442              		.loc 1 278 0 discriminator 2
+ 443 0010 0100A0E3 		mov	r0, #1
+ 444 0014 FEFFFFEB 		bl	tsp_act_enable
+ 445              	.LVL43:
+ 446              	.LBB33:
+ 447              	.LBB34:
+ 105:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_WAIT | time);
+ 448              		.loc 2 105 0 discriminator 2
+ 449 0018 38009FE5 		ldr	r0, .L40+4
+ 450 001c FEFFFFEB 		bl	tpu_enqueue
+ 451              	.LBE34:
+ 452              	.LBE33:
+ 279:calypso/tpu.c **** 		tpu_enq_wait(10);
+ 280:calypso/tpu.c **** 		puts("TSP ACT disable: ");
+ 453              		.loc 1 280 0 discriminator 2
+ 454 0020 34009FE5 		ldr	r0, .L40+8
+ 455 0024 FEFFFFEB 		bl	puts
+ 281:calypso/tpu.c **** 		tsp_act_disable(0x0001);
+ 456              		.loc 1 281 0 discriminator 2
+ 457 0028 0100A0E3 		mov	r0, #1
+ 458 002c FEFFFFEB 		bl	tsp_act_disable
+ 459              	.LVL44:
+ 460              	.LBB35:
+ 461              	.LBB36:
+ 105:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_WAIT | time);
+ 462              		.loc 2 105 0 discriminator 2
+ 463 0030 20009FE5 		ldr	r0, .L40+4
+ 464 0034 FEFFFFEB 		bl	tpu_enqueue
+ 465              	.LBE36:
+ 466              	.LBE35:
+ 276:calypso/tpu.c **** 	for (i = 0; i < 10; i++) {
+ 467              		.loc 1 276 0 discriminator 2
+ 468 0038 014054E2 		subs	r4, r4, #1
+ 469 003c F1FFFF1A 		bne	.L38
+ 470              	.LBB37:
+ 471              	.LBB38:
+  81:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SLEEP);
+ 472              		.loc 2 81 0
+ 473 0040 0400A0E1 		mov	r0, r4
+ 474 0044 FEFFFFEB 		bl	tpu_enqueue
+ 475              	.LBE38:
+ 476              	.LBE37:
+ 282:calypso/tpu.c **** 		tpu_enq_wait(10);
+ 283:calypso/tpu.c **** 	}
+ 284:calypso/tpu.c **** 	tpu_enq_sleep();
+ 285:calypso/tpu.c **** 
+ 286:calypso/tpu.c **** 	/* tell the chip to execute the scenario */
+ 287:calypso/tpu.c **** 	tpu_enable(1);
+ 477              		.loc 1 287 0
+ 478 0048 0100A0E3 		mov	r0, #1
+ 288:calypso/tpu.c **** }
+ 479              		.loc 1 288 0
+ 480 004c 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 287:calypso/tpu.c **** 	tpu_enable(1);
+ 481              		.loc 1 287 0
+ 482 0050 FEFFFFEA 		b	tpu_enable
+ 483              	.L41:
+ 484              		.align	2
+ 485              	.L40:
+ 486 0054 4F000000 		.word	.LC2
+ 487 0058 0AA00000 		.word	40970
+ 488 005c 60000000 		.word	.LC3
+ 489              		.cfi_endproc
+ 490              	.LFE18:
+ 492              		.section	.text.tpu_wait_idle,"ax",%progbits
+ 493              		.align	2
+ 494              		.global	tpu_wait_idle
+ 496              	tpu_wait_idle:
+ 497              	.LFB19:
+ 289:calypso/tpu.c **** 
+ 290:calypso/tpu.c **** void tpu_wait_idle(void)
+ 291:calypso/tpu.c **** {
+ 498              		.loc 1 291 0
+ 499              		.cfi_startproc
+ 500              		@ args = 0, pretend = 0, frame = 0
+ 501              		@ frame_needed = 0, uses_anonymous_args = 0
+ 502 0000 04E02DE5 		str	lr, [sp, #-4]!
+ 503              	.LCFI3:
+ 504              		.cfi_def_cfa_offset 4
+ 292:calypso/tpu.c **** 	dputs("Waiting for TPU Idle ");
+ 293:calypso/tpu.c **** 	/* Wait until TPU is doing something */
+ 294:calypso/tpu.c **** 	delay_us(3);
+ 505              		.loc 1 294 0
+ 506 0004 0300A0E3 		mov	r0, #3
+ 507              		.cfi_offset 14, -4
+ 508 0008 FEFFFFEB 		bl	delay_us
+ 295:calypso/tpu.c **** 	/* Wait until TPU is idle */
+ 296:calypso/tpu.c **** 	while (readw(TPU_REG(TPU_CTRL)) & TPU_CTRL_IDLE)
+ 509              		.loc 1 296 0
+ 510 000c EF3CE0E3 		mvn	r3, #61184
+ 511              	.L43:
+ 512              		.loc 1 296 0 is_stmt 0 discriminator 1
+ 513 0010 BF2F53E1 		ldrh	r2, [r3, #-255]
+ 514 0014 010C12E3 		tst	r2, #256
+ 515 0018 FCFFFF1A 		bne	.L43
+ 297:calypso/tpu.c **** 		dputchar('.');
+ 298:calypso/tpu.c **** 	dputs("Done!\n");
+ 299:calypso/tpu.c **** }
+ 516              		.loc 1 299 0 is_stmt 1
+ 517 001c 04F09DE4 		ldr	pc, [sp], #4
+ 518              		.cfi_endproc
+ 519              	.LFE19:
+ 521              		.section	.text.tpu_frame_irq_en,"ax",%progbits
+ 522              		.align	2
+ 523              		.global	tpu_frame_irq_en
+ 525              	tpu_frame_irq_en:
+ 526              	.LFB20:
+ 300:calypso/tpu.c **** 
+ 301:calypso/tpu.c **** void tpu_frame_irq_en(int mcu, int dsp)
+ 302:calypso/tpu.c **** {
+ 527              		.loc 1 302 0
+ 528              		.cfi_startproc
+ 529              		@ args = 0, pretend = 0, frame = 0
+ 530              		@ frame_needed = 0, uses_anonymous_args = 0
+ 531              		@ link register save eliminated.
+ 532              	.LVL45:
+ 303:calypso/tpu.c **** 	uint8_t reg = readb(TPU_REG(INT_CTRL));
+ 533              		.loc 1 303 0
+ 534 0000 EF3CE0E3 		mvn	r3, #61184
+ 535 0004 FD3053E5 		ldrb	r3, [r3, #-253]	@ zero_extendqisi2
+ 304:calypso/tpu.c **** 	if (mcu)
+ 536              		.loc 1 304 0
+ 537 0008 000050E3 		cmp	r0, #0
+ 303:calypso/tpu.c **** 	uint8_t reg = readb(TPU_REG(INT_CTRL));
+ 538              		.loc 1 303 0
+ 539 000c FF2003E2 		and	r2, r3, #255
+ 540              	.LVL46:
+ 305:calypso/tpu.c **** 		reg &= ~ICTRL_MCU_FRAME;
+ 306:calypso/tpu.c **** 	else
+ 307:calypso/tpu.c **** 		reg |= ICTRL_MCU_FRAME;
+ 541              		.loc 1 307 0
+ 542 0010 01308203 		orreq	r3, r2, #1
+ 305:calypso/tpu.c **** 		reg &= ~ICTRL_MCU_FRAME;
+ 543              		.loc 1 305 0
+ 544 0014 FE300312 		andne	r3, r3, #254
+ 545              	.LVL47:
+ 308:calypso/tpu.c **** 
+ 309:calypso/tpu.c **** 	if (dsp)
+ 546              		.loc 1 309 0
+ 547 0018 000051E3 		cmp	r1, #0
+ 310:calypso/tpu.c **** 		reg &= ~ICTRL_DSP_FRAME;
+ 548              		.loc 1 310 0
+ 549 001c FB300312 		andne	r3, r3, #251
+ 550              	.LVL48:
+ 311:calypso/tpu.c **** 	else
+ 312:calypso/tpu.c **** 		reg |= ICTRL_DSP_FRAME;
+ 551              		.loc 1 312 0
+ 552 0020 04308303 		orreq	r3, r3, #4
+ 553              	.LVL49:
+ 313:calypso/tpu.c **** 
+ 314:calypso/tpu.c **** 	writeb(reg, TPU_REG(INT_CTRL));
+ 554              		.loc 1 314 0
+ 555 0024 EF2CE0E3 		mvn	r2, #61184
+ 556 0028 FD3042E5 		strb	r3, [r2, #-253]
+ 315:calypso/tpu.c **** }
+ 557              		.loc 1 315 0
+ 558 002c 1EFF2FE1 		bx	lr
+ 559              		.cfi_endproc
+ 560              	.LFE20:
+ 562              		.section	.text.tpu_force_dsp_frame_irq,"ax",%progbits
+ 563              		.align	2
+ 564              		.global	tpu_force_dsp_frame_irq
+ 566              	tpu_force_dsp_frame_irq:
+ 567              	.LFB21:
+ 316:calypso/tpu.c **** 
+ 317:calypso/tpu.c **** void tpu_force_dsp_frame_irq(void)
+ 318:calypso/tpu.c **** {
+ 568              		.loc 1 318 0
+ 569              		.cfi_startproc
+ 570              		@ args = 0, pretend = 0, frame = 0
+ 571              		@ frame_needed = 0, uses_anonymous_args = 0
+ 572              		@ link register save eliminated.
+ 319:calypso/tpu.c **** 	uint8_t reg = readb(TPU_REG(INT_CTRL));
+ 573              		.loc 1 319 0
+ 574 0000 EF3CE0E3 		mvn	r3, #61184
+ 575 0004 FD2053E5 		ldrb	r2, [r3, #-253]	@ zero_extendqisi2
+ 576              	.LVL50:
+ 320:calypso/tpu.c **** 	reg |= ICTRL_DSP_FRAME_FORCE;
+ 577              		.loc 1 320 0
+ 578 0008 082082E3 		orr	r2, r2, #8
+ 579              	.LVL51:
+ 321:calypso/tpu.c **** 	writeb(reg, TPU_REG(INT_CTRL));
+ 580              		.loc 1 321 0
+ 581 000c FD2043E5 		strb	r2, [r3, #-253]
+ 322:calypso/tpu.c **** }
+ 582              		.loc 1 322 0
+ 583 0010 1EFF2FE1 		bx	lr
+ 584              		.cfi_endproc
+ 585              	.LFE21:
+ 587              		.section	.text.tpu_get_offset,"ax",%progbits
+ 588              		.align	2
+ 589              		.global	tpu_get_offset
+ 591              	tpu_get_offset:
+ 592              	.LFB22:
+ 323:calypso/tpu.c **** 
+ 324:calypso/tpu.c **** uint16_t tpu_get_offset(void)
+ 325:calypso/tpu.c **** {
+ 593              		.loc 1 325 0
+ 594              		.cfi_startproc
+ 595              		@ args = 0, pretend = 0, frame = 0
+ 596              		@ frame_needed = 0, uses_anonymous_args = 0
+ 597              		@ link register save eliminated.
+ 326:calypso/tpu.c **** 	return readw(TPU_REG(TPU_OFFSET));
+ 598              		.loc 1 326 0
+ 599 0000 EF3CE0E3 		mvn	r3, #61184
+ 600 0004 B30F53E1 		ldrh	r0, [r3, #-243]
+ 327:calypso/tpu.c **** }
+ 601              		.loc 1 327 0
+ 602 0008 1EFF2FE1 		bx	lr
+ 603              		.cfi_endproc
+ 604              	.LFE22:
+ 606              		.section	.text.tpu_get_synchro,"ax",%progbits
+ 607              		.align	2
+ 608              		.global	tpu_get_synchro
+ 610              	tpu_get_synchro:
+ 611              	.LFB23:
+ 328:calypso/tpu.c **** 
+ 329:calypso/tpu.c **** uint16_t tpu_get_synchro(void)
+ 330:calypso/tpu.c **** {
+ 612              		.loc 1 330 0
+ 613              		.cfi_startproc
+ 614              		@ args = 0, pretend = 0, frame = 0
+ 615              		@ frame_needed = 0, uses_anonymous_args = 0
+ 616              		@ link register save eliminated.
+ 331:calypso/tpu.c **** 	return readw(TPU_REG(TPU_SYNCHRO));
+ 617              		.loc 1 331 0
+ 618 0000 EF3CE0E3 		mvn	r3, #61184
+ 619 0004 B10F53E1 		ldrh	r0, [r3, #-241]
+ 332:calypso/tpu.c **** }
+ 620              		.loc 1 332 0
+ 621 0008 1EFF2FE1 		bx	lr
+ 622              		.cfi_endproc
+ 623              	.LFE23:
+ 625              		.global	__modsi3
+ 626              		.section	.text.add_mod5000,"ax",%progbits
+ 627              		.align	2
+ 628              		.global	add_mod5000
+ 630              	add_mod5000:
+ 631              	.LFB24:
+ 333:calypso/tpu.c **** 
+ 334:calypso/tpu.c **** /* add two numbers, modulo 5000, and ensure the result is positive */
+ 335:calypso/tpu.c **** uint16_t add_mod5000(int16_t a, int16_t b)
+ 336:calypso/tpu.c **** {
+ 632              		.loc 1 336 0
+ 633              		.cfi_startproc
+ 634              		@ args = 0, pretend = 0, frame = 0
+ 635              		@ frame_needed = 0, uses_anonymous_args = 0
+ 636              	.LVL52:
+ 637 0000 0118A0E1 		mov	r1, r1, asl #16
+ 638              	.LVL53:
+ 639 0004 4118A0E1 		mov	r1, r1, asr #16
+ 640 0008 0008A0E1 		mov	r0, r0, asl #16
+ 641              	.LVL54:
+ 642 000c 04E02DE5 		str	lr, [sp, #-4]!
+ 643              	.LCFI4:
+ 644              		.cfi_def_cfa_offset 4
+ 337:calypso/tpu.c **** 	int32_t sum = (int32_t)a + (int32_t)b;
+ 338:calypso/tpu.c **** 
+ 339:calypso/tpu.c **** 	sum %= 5000;
+ 645              		.loc 1 339 0
+ 646 0010 400881E0 		add	r0, r1, r0, asr #16
+ 647              	.LVL55:
+ 648 0014 18109FE5 		ldr	r1, .L55
+ 649              		.cfi_offset 14, -4
+ 650 0018 FEFFFFEB 		bl	__modsi3
+ 651              	.LVL56:
+ 340:calypso/tpu.c **** 
+ 341:calypso/tpu.c **** 	/* wrap around zero */
+ 342:calypso/tpu.c **** 	if (sum < 0)
+ 652              		.loc 1 342 0
+ 653 001c 000050E3 		cmp	r0, #0
+ 343:calypso/tpu.c **** 		sum += 5000;
+ 654              		.loc 1 343 0
+ 655 0020 4E0D80B2 		addlt	r0, r0, #4992
+ 656              	.LVL57:
+ 657 0024 080080B2 		addlt	r0, r0, #8
+ 658              	.LVL58:
+ 659 0028 0008A0E1 		mov	r0, r0, asl #16
+ 660              	.LVL59:
+ 344:calypso/tpu.c **** 
+ 345:calypso/tpu.c **** 	return sum;
+ 346:calypso/tpu.c **** }
+ 661              		.loc 1 346 0
+ 662 002c 2008A0E1 		mov	r0, r0, lsr #16
+ 663 0030 04F09DE4 		ldr	pc, [sp], #4
+ 664              	.L56:
+ 665              		.align	2
+ 666              	.L55:
+ 667 0034 88130000 		.word	5000
+ 668              		.cfi_endproc
+ 669              	.LFE24:
+ 671              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 672              	.LC0:
+ 673 0000 54696D65 		.ascii	"Timeout while waiting for TPU ctrl bit!\012\000"
+ 673      6F757420 
+ 673      7768696C 
+ 673      65207761 
+ 673      6974696E 
+ 674              	.LC1:
+ 675 0029 54505520 		.ascii	"TPU enqueue beyond end of TPU memory\012\000"
+ 675      656E7175 
+ 675      65756520 
+ 675      6265796F 
+ 675      6E642065 
+ 676              	.LC2:
+ 677 004f 54535020 		.ascii	"TSP ACT enable: \000"
+ 677      41435420 
+ 677      656E6162 
+ 677      6C653A20 
+ 677      00
+ 678              	.LC3:
+ 679 0060 54535020 		.ascii	"TSP ACT disable: \000"
+ 679      41435420 
+ 679      64697361 
+ 679      626C653A 
+ 679      2000
+ 680              		.data
+ 681              		.align	2
+ 682              		.set	.LANCHOR0,. + 0
+ 685              	tpu_ptr:
+ 686 0000 0090FFFF 		.word	-28672
+ 687              		.text
+ 688              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 tpu.c
+     /tmp/cclZvWj6.s:12     .text.tpu_wait_ctrl_bit:0000000000000000 $a
+     /tmp/cclZvWj6.s:14     .text.tpu_wait_ctrl_bit:0000000000000000 tpu_wait_ctrl_bit
+     /tmp/cclZvWj6.s:78     .text.tpu_wait_ctrl_bit:0000000000000058 $d
+     /tmp/cclZvWj6.s:84     .text.tpu_reset:0000000000000000 $a
+     /tmp/cclZvWj6.s:87     .text.tpu_reset:0000000000000000 tpu_reset
+     /tmp/cclZvWj6.s:127    .text.tpu_enable:0000000000000000 $a
+     /tmp/cclZvWj6.s:130    .text.tpu_enable:0000000000000000 tpu_enable
+     /tmp/cclZvWj6.s:167    .text.tpu_enable:000000000000002c $d
+     /tmp/cclZvWj6.s:173    .text.tpu_clk_enable:0000000000000000 $a
+     /tmp/cclZvWj6.s:176    .text.tpu_clk_enable:0000000000000000 tpu_clk_enable
+     /tmp/cclZvWj6.s:214    .text.tpu_dsp_frameirq_enable:0000000000000000 $a
+     /tmp/cclZvWj6.s:217    .text.tpu_dsp_frameirq_enable:0000000000000000 tpu_dsp_frameirq_enable
+     /tmp/cclZvWj6.s:244    .text.tpu_dsp_fameirq_pending:0000000000000000 $a
+     /tmp/cclZvWj6.s:247    .text.tpu_dsp_fameirq_pending:0000000000000000 tpu_dsp_fameirq_pending
+     /tmp/cclZvWj6.s:268    .text.tpu_rewind:0000000000000000 $a
+     /tmp/cclZvWj6.s:271    .text.tpu_rewind:0000000000000000 tpu_rewind
+     /tmp/cclZvWj6.s:287    .text.tpu_rewind:0000000000000010 $d
+     /tmp/cclZvWj6.s:293    .text.tpu_enqueue:0000000000000000 $a
+     /tmp/cclZvWj6.s:296    .text.tpu_enqueue:0000000000000000 tpu_enqueue
+     /tmp/cclZvWj6.s:324    .text.tpu_enqueue:0000000000000020 $d
+     /tmp/cclZvWj6.s:330    .text.tpu_init:0000000000000000 $a
+     /tmp/cclZvWj6.s:333    .text.tpu_init:0000000000000000 tpu_init
+     /tmp/cclZvWj6.s:412    .text.tpu_init:000000000000005c $d
+     /tmp/cclZvWj6.s:420    .text.tpu_test:0000000000000000 $a
+     /tmp/cclZvWj6.s:423    .text.tpu_test:0000000000000000 tpu_test
+     /tmp/cclZvWj6.s:486    .text.tpu_test:0000000000000054 $d
+     /tmp/cclZvWj6.s:493    .text.tpu_wait_idle:0000000000000000 $a
+     /tmp/cclZvWj6.s:496    .text.tpu_wait_idle:0000000000000000 tpu_wait_idle
+     /tmp/cclZvWj6.s:522    .text.tpu_frame_irq_en:0000000000000000 $a
+     /tmp/cclZvWj6.s:525    .text.tpu_frame_irq_en:0000000000000000 tpu_frame_irq_en
+     /tmp/cclZvWj6.s:563    .text.tpu_force_dsp_frame_irq:0000000000000000 $a
+     /tmp/cclZvWj6.s:566    .text.tpu_force_dsp_frame_irq:0000000000000000 tpu_force_dsp_frame_irq
+     /tmp/cclZvWj6.s:588    .text.tpu_get_offset:0000000000000000 $a
+     /tmp/cclZvWj6.s:591    .text.tpu_get_offset:0000000000000000 tpu_get_offset
+     /tmp/cclZvWj6.s:607    .text.tpu_get_synchro:0000000000000000 $a
+     /tmp/cclZvWj6.s:610    .text.tpu_get_synchro:0000000000000000 tpu_get_synchro
+     /tmp/cclZvWj6.s:627    .text.add_mod5000:0000000000000000 $a
+     /tmp/cclZvWj6.s:630    .text.add_mod5000:0000000000000000 add_mod5000
+     /tmp/cclZvWj6.s:667    .text.add_mod5000:0000000000000034 $d
+     /tmp/cclZvWj6.s:681    .data:0000000000000000 $d
+     /tmp/cclZvWj6.s:685    .data:0000000000000000 tpu_ptr
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+puts
+tsp_act_enable
+tsp_act_disable
+delay_us
+__modsi3

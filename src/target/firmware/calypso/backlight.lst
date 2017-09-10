@@ -1,0 +1,173 @@
+   1              		.file	"backlight.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.bl_mode_pwl,"ax",%progbits
+  12              		.align	2
+  13              		.global	bl_mode_pwl
+  15              	bl_mode_pwl:
+  16              	.LFB0:
+  17              		.file 1 "calypso/backlight.c"
+   1:calypso/backlight.c **** /* Calypso DBB internal PWL (Pulse Width / Light) Driver */
+   2:calypso/backlight.c **** 
+   3:calypso/backlight.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:calypso/backlight.c ****  *
+   5:calypso/backlight.c ****  * All Rights Reserved
+   6:calypso/backlight.c ****  *
+   7:calypso/backlight.c ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/backlight.c ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/backlight.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/backlight.c ****  * (at your option) any later version.
+  11:calypso/backlight.c ****  *
+  12:calypso/backlight.c ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/backlight.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/backlight.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/backlight.c ****  * GNU General Public License for more details.
+  16:calypso/backlight.c ****  *
+  17:calypso/backlight.c ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/backlight.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/backlight.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/backlight.c ****  *
+  21:calypso/backlight.c ****  */
+  22:calypso/backlight.c **** 
+  23:calypso/backlight.c **** #include <stdint.h>
+  24:calypso/backlight.c **** #include <memory.h>
+  25:calypso/backlight.c **** 
+  26:calypso/backlight.c **** #define BASE_ADDR_PWL	0xfffe8000
+  27:calypso/backlight.c **** #define PWL_REG(m)	(BASE_ADDR_PWL + (m))
+  28:calypso/backlight.c **** 
+  29:calypso/backlight.c **** #define ASIC_CONF_REG		0xfffef008
+  30:calypso/backlight.c **** #define LIGHT_LEVEL_REG		0xfffe4810
+  31:calypso/backlight.c **** 
+  32:calypso/backlight.c **** enum pwl_reg {
+  33:calypso/backlight.c **** 	PWL_LEVEL	= 0,
+  34:calypso/backlight.c **** 	PWL_CTRL	= 1,
+  35:calypso/backlight.c **** };
+  36:calypso/backlight.c **** 
+  37:calypso/backlight.c **** #define ASCONF_PWL_ENA	(1 << 4)
+  38:calypso/backlight.c **** 
+  39:calypso/backlight.c **** void bl_mode_pwl(int on)
+  40:calypso/backlight.c **** {
+  18              		.loc 1 40 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  41:calypso/backlight.c **** 	uint16_t reg;
+  42:calypso/backlight.c **** 
+  43:calypso/backlight.c **** 	reg = readw(ASIC_CONF_REG);
+  24              		.loc 1 43 0
+  25 0000 2C309FE5 		ldr	r3, .L4
+  26 0004 B72F53E1 		ldrh	r2, [r3, #-247]
+  27              	.LVL1:
+  44:calypso/backlight.c **** 
+  45:calypso/backlight.c **** 	if (on) {
+  28              		.loc 1 45 0
+  29 0008 000050E3 		cmp	r0, #0
+  46:calypso/backlight.c **** 		/* Enable pwl */
+  47:calypso/backlight.c **** 		writeb(0x01, PWL_REG(PWL_CTRL));
+  48:calypso/backlight.c **** 		/* Switch pin from LT to PWL */
+  49:calypso/backlight.c **** 		reg |= ASCONF_PWL_ENA;
+  50:calypso/backlight.c **** 		writew(reg, ASIC_CONF_REG);
+  51:calypso/backlight.c **** 	} else {
+  52:calypso/backlight.c **** 		/* Switch pin from PWL to LT */
+  53:calypso/backlight.c **** 		reg &= ~ASCONF_PWL_ENA;
+  30              		.loc 1 53 0
+  31 000c 1020C203 		biceq	r2, r2, #16
+  32              	.LVL2:
+  54:calypso/backlight.c **** 		writew(reg, ASIC_CONF_REG);
+  33              		.loc 1 54 0
+  34 0010 B72F4301 		streqh	r2, [r3, #-247]	@ movhi
+  47:calypso/backlight.c **** 		writeb(0x01, PWL_REG(PWL_CTRL));
+  35              		.loc 1 47 0
+  36 0014 1C109F15 		ldrne	r1, .L4+4
+  55:calypso/backlight.c **** 		/* Disable pwl */
+  56:calypso/backlight.c **** 		writeb(0x00, PWL_REG(PWL_CTRL));
+  37              		.loc 1 56 0
+  38 0018 18309F05 		ldreq	r3, .L4+4
+  47:calypso/backlight.c **** 		writeb(0x01, PWL_REG(PWL_CTRL));
+  39              		.loc 1 47 0
+  40 001c 0100A013 		movne	r0, #1
+  41              	.LVL3:
+  49:calypso/backlight.c **** 		reg |= ASCONF_PWL_ENA;
+  42              		.loc 1 49 0
+  43 0020 10208213 		orrne	r2, r2, #16
+  44              	.LVL4:
+  47:calypso/backlight.c **** 		writeb(0x01, PWL_REG(PWL_CTRL));
+  45              		.loc 1 47 0
+  46 0024 FE004115 		strneb	r0, [r1, #-254]
+  47              		.loc 1 56 0
+  48 0028 FE004305 		streqb	r0, [r3, #-254]
+  50:calypso/backlight.c **** 		writew(reg, ASIC_CONF_REG);
+  49              		.loc 1 50 0
+  50 002c B72F4311 		strneh	r2, [r3, #-247]	@ movhi
+  51 0030 1EFF2FE1 		bx	lr
+  52              	.L5:
+  53              		.align	2
+  54              	.L4:
+  55 0034 FFF0FEFF 		.word	-69377
+  56 0038 FF80FEFF 		.word	-98049
+  57              		.cfi_endproc
+  58              	.LFE0:
+  60              		.section	.text.bl_level,"ax",%progbits
+  61              		.align	2
+  62              		.global	bl_level
+  64              	bl_level:
+  65              	.LFB1:
+  57:calypso/backlight.c **** 	}
+  58:calypso/backlight.c **** }
+  59:calypso/backlight.c **** 
+  60:calypso/backlight.c **** void bl_level(uint8_t level)
+  61:calypso/backlight.c **** {
+  66              		.loc 1 61 0
+  67              		.cfi_startproc
+  68              		@ args = 0, pretend = 0, frame = 0
+  69              		@ frame_needed = 0, uses_anonymous_args = 0
+  70              		@ link register save eliminated.
+  71              	.LVL5:
+  62:calypso/backlight.c **** 	if (readw(ASIC_CONF_REG) & ASCONF_PWL_ENA) {
+  72              		.loc 1 62 0
+  73 0000 20309FE5 		ldr	r3, .L9
+  74 0004 B73F53E1 		ldrh	r3, [r3, #-247]
+  75 0008 100013E3 		tst	r3, #16
+  61:calypso/backlight.c **** {
+  76              		.loc 1 61 0
+  77 000c FF0000E2 		and	r0, r0, #255
+  78              	.LVL6:
+  63:calypso/backlight.c **** 		writeb(level, PWL_REG(PWL_LEVEL));
+  79              		.loc 1 63 0
+  80 0010 14309F15 		ldrne	r3, .L9+4
+  64:calypso/backlight.c **** 	} else {
+  65:calypso/backlight.c **** 		/* we need to scale the light level, as the
+  66:calypso/backlight.c **** 		 * ARMIO light controller only knows 0..63 */
+  67:calypso/backlight.c **** 		writeb(level>>2, LIGHT_LEVEL_REG);
+  81              		.loc 1 67 0
+  82 0014 14309F05 		ldreq	r3, .L9+8
+  83 0018 2001A001 		moveq	r0, r0, lsr #2
+  63:calypso/backlight.c **** 		writeb(level, PWL_REG(PWL_LEVEL));
+  84              		.loc 1 63 0
+  85 001c FF004315 		strneb	r0, [r3, #-255]
+  86              		.loc 1 67 0
+  87 0020 EF004305 		streqb	r0, [r3, #-239]
+  88 0024 1EFF2FE1 		bx	lr
+  89              	.L10:
+  90              		.align	2
+  91              	.L9:
+  92 0028 FFF0FEFF 		.word	-69377
+  93 002c FF80FEFF 		.word	-98049
+  94 0030 FF48FEFF 		.word	-112385
+  95              		.cfi_endproc
+  96              	.LFE1:
+  98              		.text
+  99              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 backlight.c
+     /tmp/ccSti1Ot.s:12     .text.bl_mode_pwl:0000000000000000 $a
+     /tmp/ccSti1Ot.s:15     .text.bl_mode_pwl:0000000000000000 bl_mode_pwl
+     /tmp/ccSti1Ot.s:55     .text.bl_mode_pwl:0000000000000034 $d
+     /tmp/ccSti1Ot.s:61     .text.bl_level:0000000000000000 $a
+     /tmp/ccSti1Ot.s:64     .text.bl_level:0000000000000000 bl_level
+     /tmp/ccSti1Ot.s:92     .text.bl_level:0000000000000028 $d
+                     .debug_frame:0000000000000010 $d
+
+NO UNDEFINED SYMBOLS

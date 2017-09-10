@@ -1,0 +1,894 @@
+   1              		.file	"timer.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.timer_irq,"ax",%progbits
+  12              		.align	2
+  14              	timer_irq:
+  15              	.LFB19:
+  16              		.file 1 "comm/timer.c"
+   1:comm/timer.c  **** /* (C) 2008 by Holger Hans Peter Freyther <zecke@selfish.org>
+   2:comm/timer.c  ****  * (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   3:comm/timer.c  ****  * All Rights Reserved
+   4:comm/timer.c  ****  *
+   5:comm/timer.c  ****  * This program is free software; you can redistribute it and/or modify
+   6:comm/timer.c  ****  * it under the terms of the GNU General Public License as published by
+   7:comm/timer.c  ****  * the Free Software Foundation; either version 2 of the License, or
+   8:comm/timer.c  ****  * (at your option) any later version.
+   9:comm/timer.c  ****  *
+  10:comm/timer.c  ****  * This program is distributed in the hope that it will be useful,
+  11:comm/timer.c  ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  12:comm/timer.c  ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  13:comm/timer.c  ****  * GNU General Public License for more details.
+  14:comm/timer.c  ****  *
+  15:comm/timer.c  ****  * You should have received a copy of the GNU General Public License along
+  16:comm/timer.c  ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  17:comm/timer.c  ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  18:comm/timer.c  ****  *
+  19:comm/timer.c  ****  */
+  20:comm/timer.c  **** 
+  21:comm/timer.c  **** #include <stdint.h>
+  22:comm/timer.c  **** #include <debug.h>
+  23:comm/timer.c  **** #include <osmocom/core/linuxlist.h>
+  24:comm/timer.c  **** 
+  25:comm/timer.c  **** #include <comm/timer.h>
+  26:comm/timer.c  **** 
+  27:comm/timer.c  **** #include <calypso/timer.h>
+  28:comm/timer.c  **** #include <calypso/irq.h>
+  29:comm/timer.c  **** 
+  30:comm/timer.c  **** #include <keypad.h>
+  31:comm/timer.c  **** 
+  32:comm/timer.c  **** static LLIST_HEAD(timer_list);
+  33:comm/timer.c  **** 
+  34:comm/timer.c  **** unsigned long volatile jiffies;
+  35:comm/timer.c  **** 
+  36:comm/timer.c  **** #define time_after(a,b)         \
+  37:comm/timer.c  **** 	(typecheck(unsigned long, a) && \
+  38:comm/timer.c  **** 	 typecheck(unsigned long, b) && \
+  39:comm/timer.c  **** 	 ((long)(b) - (long)(a) < 0))
+  40:comm/timer.c  **** #define time_before(a,b)        time_after(b,a)
+  41:comm/timer.c  **** 
+  42:comm/timer.c  **** void osmo_timer_add(struct osmo_timer_list *timer)
+  43:comm/timer.c  **** {
+  44:comm/timer.c  **** 	struct osmo_timer_list *list_timer;
+  45:comm/timer.c  **** 
+  46:comm/timer.c  **** 	/* TODO: Optimize and remember the closest item... */
+  47:comm/timer.c  **** 	timer->active = 1;
+  48:comm/timer.c  **** 
+  49:comm/timer.c  **** 	/* this might be called from within osmo_timers_update */
+  50:comm/timer.c  **** 	llist_for_each_entry(list_timer, &timer_list, entry)
+  51:comm/timer.c  **** 		if (timer == list_timer)
+  52:comm/timer.c  **** 			return;
+  53:comm/timer.c  **** 
+  54:comm/timer.c  **** 	timer->in_list = 1;
+  55:comm/timer.c  **** 	llist_add(&timer->entry, &timer_list);
+  56:comm/timer.c  **** }
+  57:comm/timer.c  **** 
+  58:comm/timer.c  **** void osmo_timer_schedule(struct osmo_timer_list *timer, int milliseconds)
+  59:comm/timer.c  **** {
+  60:comm/timer.c  **** 	timer->expires = jiffies + ((milliseconds * HZ) / 1000);
+  61:comm/timer.c  **** 	osmo_timer_add(timer);
+  62:comm/timer.c  **** }
+  63:comm/timer.c  **** 
+  64:comm/timer.c  **** void osmo_timer_del(struct osmo_timer_list *timer)
+  65:comm/timer.c  **** {
+  66:comm/timer.c  **** 	if (timer->in_list) {
+  67:comm/timer.c  **** 		timer->active = 0;
+  68:comm/timer.c  **** 		timer->in_list = 0;
+  69:comm/timer.c  **** 		llist_del(&timer->entry);
+  70:comm/timer.c  **** 	}
+  71:comm/timer.c  **** }
+  72:comm/timer.c  **** 
+  73:comm/timer.c  **** int osmo_timer_pending(struct osmo_timer_list *timer)
+  74:comm/timer.c  **** {
+  75:comm/timer.c  **** 	return timer->active;
+  76:comm/timer.c  **** }
+  77:comm/timer.c  **** 
+  78:comm/timer.c  **** #if 0
+  79:comm/timer.c  **** /*
+  80:comm/timer.c  ****  * if we have a nearest time return the delta between the current
+  81:comm/timer.c  ****  * time and the time of the nearest timer.
+  82:comm/timer.c  ****  * If the nearest timer timed out return NULL and then we will
+  83:comm/timer.c  ****  * dispatch everything after the select
+  84:comm/timer.c  ****  */
+  85:comm/timer.c  **** struct timeval *nearest_timer()
+  86:comm/timer.c  **** {
+  87:comm/timer.c  **** 	struct timeval current_time;
+  88:comm/timer.c  **** 
+  89:comm/timer.c  **** 	if (s_nearest_time.tv_sec == 0 && s_nearest_time.tv_usec == 0)
+  90:comm/timer.c  **** 		return NULL;
+  91:comm/timer.c  **** 
+  92:comm/timer.c  **** 	if (gettimeofday(&current_time, NULL) == -1)
+  93:comm/timer.c  **** 		return NULL;
+  94:comm/timer.c  **** 
+  95:comm/timer.c  **** 	unsigned long long nearestTime = s_nearest_time.tv_sec * MICRO_SECONDS + s_nearest_time.tv_usec;
+  96:comm/timer.c  **** 	unsigned long long currentTime = current_time.tv_sec * MICRO_SECONDS + current_time.tv_usec;
+  97:comm/timer.c  **** 
+  98:comm/timer.c  **** 	if (nearestTime < currentTime) {
+  99:comm/timer.c  **** 		s_select_time.tv_sec = 0;
+ 100:comm/timer.c  **** 		s_select_time.tv_usec = 0;
+ 101:comm/timer.c  **** 	} else {
+ 102:comm/timer.c  **** 		s_select_time.tv_sec = (nearestTime - currentTime) / MICRO_SECONDS;
+ 103:comm/timer.c  **** 		s_select_time.tv_usec = (nearestTime - currentTime) % MICRO_SECONDS;
+ 104:comm/timer.c  **** 	}
+ 105:comm/timer.c  **** 
+ 106:comm/timer.c  **** 	return &s_select_time;
+ 107:comm/timer.c  **** }
+ 108:comm/timer.c  **** 
+ 109:comm/timer.c  **** /*
+ 110:comm/timer.c  ****  * Find the nearest time and update s_nearest_time
+ 111:comm/timer.c  ****  */
+ 112:comm/timer.c  **** void prepare_timers()
+ 113:comm/timer.c  **** {
+ 114:comm/timer.c  **** 	struct osmo_timer_list *timer, *nearest_timer = NULL;
+ 115:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 116:comm/timer.c  **** 		if (!nearest_timer || time_before(timer->expires, nearest_timer->expires)) {
+ 117:comm/timer.c  **** 			nearest_timer = timer;
+ 118:comm/timer.c  **** 		}
+ 119:comm/timer.c  **** 	}
+ 120:comm/timer.c  **** 
+ 121:comm/timer.c  **** 	if (nearest_timer) {
+ 122:comm/timer.c  **** 		s_nearest_time = nearest_timer->timeout;
+ 123:comm/timer.c  **** 	} else {
+ 124:comm/timer.c  **** 		memset(&s_nearest_time, 0, sizeof(struct timeval));
+ 125:comm/timer.c  **** 	}
+ 126:comm/timer.c  **** }
+ 127:comm/timer.c  **** #endif
+ 128:comm/timer.c  **** 
+ 129:comm/timer.c  **** /*
+ 130:comm/timer.c  ****  * fire all timers... and remove them
+ 131:comm/timer.c  ****  */
+ 132:comm/timer.c  **** int osmo_timers_update(void)
+ 133:comm/timer.c  **** {
+ 134:comm/timer.c  **** 	struct osmo_timer_list *timer, *tmp;
+ 135:comm/timer.c  **** 	int work = 0;
+ 136:comm/timer.c  **** 
+ 137:comm/timer.c  **** 	/*
+ 138:comm/timer.c  **** 	 * The callbacks might mess with our list and in this case
+ 139:comm/timer.c  **** 	 * even llist_for_each_entry_safe is not safe to use. To allow
+ 140:comm/timer.c  **** 	 * osmo_timer_del, osmo_timer_add, osmo_timer_schedule to be called from within
+ 141:comm/timer.c  **** 	 * the callback we jump through some loops.
+ 142:comm/timer.c  **** 	 *
+ 143:comm/timer.c  **** 	 * First we set the handled flag of each active timer to zero,
+ 144:comm/timer.c  **** 	 * then we iterate over the list and execute the callbacks. As the
+ 145:comm/timer.c  **** 	 * list might have been changed (specially the next) from within
+ 146:comm/timer.c  **** 	 * the callback we have to start over again. Once every callback
+ 147:comm/timer.c  **** 	 * is dispatched we will remove the non-active from the list.
+ 148:comm/timer.c  **** 	 *
+ 149:comm/timer.c  **** 	 * TODO: If this is a performance issue we can poison a global
+ 150:comm/timer.c  **** 	 * variable in osmo_timer_add and osmo_timer_del and only then restart.
+ 151:comm/timer.c  **** 	 */
+ 152:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 153:comm/timer.c  **** 		timer->handled = 0;
+ 154:comm/timer.c  **** 	}
+ 155:comm/timer.c  **** 
+ 156:comm/timer.c  **** restart:
+ 157:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 158:comm/timer.c  **** 		if (!timer->handled && time_before(timer->expires, jiffies)) {
+ 159:comm/timer.c  **** 			timer->handled = 1;
+ 160:comm/timer.c  **** 			timer->active = 0;
+ 161:comm/timer.c  **** 			(*timer->cb)(timer->data);
+ 162:comm/timer.c  **** 			work = 1;
+ 163:comm/timer.c  **** 			goto restart;
+ 164:comm/timer.c  **** 		}
+ 165:comm/timer.c  **** 	}
+ 166:comm/timer.c  **** 
+ 167:comm/timer.c  **** 	llist_for_each_entry_safe(timer, tmp, &timer_list, entry) {
+ 168:comm/timer.c  **** 		timer->handled = 0;
+ 169:comm/timer.c  **** 		if (!timer->active) {
+ 170:comm/timer.c  **** 			osmo_timer_del(timer);
+ 171:comm/timer.c  **** 		}
+ 172:comm/timer.c  **** 	}
+ 173:comm/timer.c  **** 
+ 174:comm/timer.c  **** 	return work;
+ 175:comm/timer.c  **** }
+ 176:comm/timer.c  **** 
+ 177:comm/timer.c  **** int osmo_timers_check(void)
+ 178:comm/timer.c  **** {
+ 179:comm/timer.c  **** 	struct osmo_timer_list *timer;
+ 180:comm/timer.c  **** 	int i = 0;
+ 181:comm/timer.c  **** 
+ 182:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 183:comm/timer.c  **** 		i++;
+ 184:comm/timer.c  **** 	}
+ 185:comm/timer.c  **** 	return i;
+ 186:comm/timer.c  **** }
+ 187:comm/timer.c  **** 
+ 188:comm/timer.c  **** static void timer_irq(enum irq_nr irq)
+ 189:comm/timer.c  **** {
+  17              		.loc 1 189 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+ 190:comm/timer.c  **** 	/* we only increment jiffies here.  FIXME: does this need to be atomic? */
+ 191:comm/timer.c  **** 	jiffies++;
+  23              		.loc 1 191 0
+  24 0000 0C309FE5 		ldr	r3, .L2
+  25 0004 002093E5 		ldr	r2, [r3, #0]
+  26 0008 012082E2 		add	r2, r2, #1
+  27 000c 002083E5 		str	r2, [r3, #0]
+ 192:comm/timer.c  **** 
+ 193:comm/timer.c  **** 	keypad_poll();
+ 194:comm/timer.c  **** }
+  28              		.loc 1 194 0
+ 193:comm/timer.c  **** 	keypad_poll();
+  29              		.loc 1 193 0
+  30 0010 FEFFFFEA 		b	keypad_poll
+  31              	.LVL1:
+  32              	.L3:
+  33              		.align	2
+  34              	.L2:
+  35 0014 00000000 		.word	jiffies
+  36              		.cfi_endproc
+  37              	.LFE19:
+  39              		.section	.text.osmo_timer_add,"ax",%progbits
+  40              		.align	2
+  41              		.global	osmo_timer_add
+  43              	osmo_timer_add:
+  44              	.LFB13:
+  43:comm/timer.c  **** {
+  45              		.loc 1 43 0
+  46              		.cfi_startproc
+  47              		@ args = 0, pretend = 0, frame = 0
+  48              		@ frame_needed = 0, uses_anonymous_args = 0
+  49              		@ link register save eliminated.
+  50              	.LVL2:
+  47:comm/timer.c  **** 	timer->active = 1;
+  51              		.loc 1 47 0
+  52 0000 0C30D0E5 		ldrb	r3, [r0, #12]	@ zero_extendqisi2
+  53 0004 013083E3 		orr	r3, r3, #1
+  54 0008 0C30C0E5 		strb	r3, [r0, #12]
+  55              	.LBB43:
+  50:comm/timer.c  **** 	llist_for_each_entry(list_timer, &timer_list, entry)
+  56              		.loc 1 50 0
+  57 000c 3C109FE5 		ldr	r1, .L8
+  58 0010 002091E5 		ldr	r2, [r1, #0]
+  59              	.LVL3:
+  60 0014 0230A0E1 		mov	r3, r2
+  61              	.LVL4:
+  62 0018 020000EA 		b	.L5
+  63              	.LVL5:
+  64              	.L7:
+  65              	.LBE43:
+  51:comm/timer.c  **** 		if (timer == list_timer)
+  66              		.loc 1 51 0
+  67 001c 030050E1 		cmp	r0, r3
+  68 0020 1EFF2F01 		bxeq	lr
+  69              	.LBB44:
+  50:comm/timer.c  **** 	llist_for_each_entry(list_timer, &timer_list, entry)
+  70              		.loc 1 50 0
+  71 0024 003093E5 		ldr	r3, [r3, #0]
+  72              	.LVL6:
+  73              	.L5:
+  74              	.LBE44:
+  50:comm/timer.c  **** 	llist_for_each_entry(list_timer, &timer_list, entry)
+  75              		.loc 1 50 0 is_stmt 0 discriminator 1
+  76 0028 010053E1 		cmp	r3, r1
+  77 002c FAFFFF1A 		bne	.L7
+  54:comm/timer.c  **** 	timer->in_list = 1;
+  78              		.loc 1 54 0 is_stmt 1
+  79 0030 0C10D0E5 		ldrb	r1, [r0, #12]	@ zero_extendqisi2
+  80 0034 041081E3 		orr	r1, r1, #4
+  81 0038 0C10C0E5 		strb	r1, [r0, #12]
+  82              	.LVL7:
+  83              	.LBB45:
+  84              	.LBB46:
+  85              	.LBB47:
+  86              		.file 2 "../../shared/libosmocore/include/osmocom/core/linuxlist.h"
+   1:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #ifndef _LINUX_LLIST_H
+   2:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define _LINUX_LLIST_H
+   3:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+   4:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #include <stddef.h>
+   5:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+   6:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #ifndef inline
+   7:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define inline __inline__
+   8:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #endif
+   9:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  10:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** static inline void prefetch(__attribute__((unused)) const void *x) {;}
+  11:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  12:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /**
+  13:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * container_of - cast a member of a structure out to the containing structure
+  14:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+  15:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @ptr:	the pointer to the member.
+  16:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @type:	the type of the container struct this is embedded in.
+  17:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @member:	the name of the member within the struct.
+  18:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+  19:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+  20:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define container_of(ptr, type, member) ({			\
+  21:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****         const typeof( ((type *)0)->member ) *__mptr = (typeof( ((type *)0)->member ) *)(ptr);	\
+  22:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****         (type *)( (char *)__mptr - offsetof(type, member) );})
+  23:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  24:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  25:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /*
+  26:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * These are non-NULL pointers that will result in page faults
+  27:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * under normal circumstances, used to verify that nobody uses
+  28:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * non-initialized llist entries.
+  29:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+  30:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define LLIST_POISON1  ((void *) 0x00100100)
+  31:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define LLIST_POISON2  ((void *) 0x00200200)
+  32:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  33:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /*
+  34:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Simple doubly linked llist implementation.
+  35:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+  36:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Some of the internal functions ("__xxx") are useful when
+  37:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * manipulating whole llists rather than single entries, as
+  38:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * sometimes we already know the next/prev entries and we can
+  39:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * generate better code by using them directly rather than
+  40:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * using the generic single-entry routines.
+  41:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+  42:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  43:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** struct llist_head {
+  44:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	struct llist_head *next, *prev;
+  45:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** };
+  46:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  47:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define LLIST_HEAD_INIT(name) { &(name), &(name) }
+  48:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  49:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define LLIST_HEAD(name) \
+  50:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	struct llist_head name = LLIST_HEAD_INIT(name)
+  51:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  52:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** #define INIT_LLIST_HEAD(ptr) do { \
+  53:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	(ptr)->next = (ptr); (ptr)->prev = (ptr); \
+  54:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** } while (0)
+  55:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  56:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /*
+  57:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Insert a new entry between two known consecutive entries. 
+  58:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+  59:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * This is only for internal llist manipulation where we know
+  60:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * the prev/next entries already!
+  61:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+  62:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** static inline void __llist_add(struct llist_head *_new,
+  63:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 			      struct llist_head *prev,
+  64:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 			      struct llist_head *next)
+  65:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** {
+  66:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	next->prev = _new;
+  67:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	_new->next = next;
+  87              		.loc 2 67 0
+  88 003c 002080E5 		str	r2, [r0, #0]
+  66:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	next->prev = _new;
+  89              		.loc 2 66 0
+  90 0040 040082E5 		str	r0, [r2, #4]
+  68:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	_new->prev = prev;
+  69:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	prev->next = _new;
+  91              		.loc 2 69 0
+  92 0044 000083E5 		str	r0, [r3, #0]
+  68:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	_new->prev = prev;
+  93              		.loc 2 68 0
+  94 0048 043080E5 		str	r3, [r0, #4]
+  95 004c 1EFF2FE1 		bx	lr
+  96              	.L9:
+  97              		.align	2
+  98              	.L8:
+  99 0050 00000000 		.word	.LANCHOR0
+ 100              	.LBE47:
+ 101              	.LBE46:
+ 102              	.LBE45:
+ 103              		.cfi_endproc
+ 104              	.LFE13:
+ 106              		.global	__divsi3
+ 107              		.section	.text.osmo_timer_schedule,"ax",%progbits
+ 108              		.align	2
+ 109              		.global	osmo_timer_schedule
+ 111              	osmo_timer_schedule:
+ 112              	.LFB14:
+  59:comm/timer.c  **** {
+ 113              		.loc 1 59 0
+ 114              		.cfi_startproc
+ 115              		@ args = 0, pretend = 0, frame = 0
+ 116              		@ frame_needed = 0, uses_anonymous_args = 0
+ 117              	.LVL8:
+  60:comm/timer.c  **** 	timer->expires = jiffies + ((milliseconds * HZ) / 1000);
+ 118              		.loc 1 60 0
+ 119 0000 28309FE5 		ldr	r3, .L11
+  59:comm/timer.c  **** {
+ 120              		.loc 1 59 0
+ 121 0004 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 122              	.LCFI0:
+ 123              		.cfi_def_cfa_offset 12
+  59:comm/timer.c  **** {
+ 124              		.loc 1 59 0
+ 125 0008 0040A0E1 		mov	r4, r0
+ 126              		.cfi_offset 14, -4
+ 127              		.cfi_offset 5, -8
+ 128              		.cfi_offset 4, -12
+  60:comm/timer.c  **** 	timer->expires = jiffies + ((milliseconds * HZ) / 1000);
+ 129              		.loc 1 60 0
+ 130 000c 0100A0E1 		mov	r0, r1
+ 131              	.LVL9:
+ 132 0010 0A10A0E3 		mov	r1, #10
+ 133              	.LVL10:
+ 134 0014 005093E5 		ldr	r5, [r3, #0]
+ 135 0018 FEFFFFEB 		bl	__divsi3
+ 136              	.LVL11:
+ 137 001c 050080E0 		add	r0, r0, r5
+ 138 0020 080084E5 		str	r0, [r4, #8]
+  61:comm/timer.c  **** 	osmo_timer_add(timer);
+ 139              		.loc 1 61 0
+ 140 0024 0400A0E1 		mov	r0, r4
+  62:comm/timer.c  **** }
+ 141              		.loc 1 62 0
+ 142 0028 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+  61:comm/timer.c  **** 	osmo_timer_add(timer);
+ 143              		.loc 1 61 0
+ 144 002c FEFFFFEA 		b	osmo_timer_add
+ 145              	.L12:
+ 146              		.align	2
+ 147              	.L11:
+ 148 0030 00000000 		.word	jiffies
+ 149              		.cfi_endproc
+ 150              	.LFE14:
+ 152              		.section	.text.osmo_timer_del,"ax",%progbits
+ 153              		.align	2
+ 154              		.global	osmo_timer_del
+ 156              	osmo_timer_del:
+ 157              	.LFB15:
+  65:comm/timer.c  **** {
+ 158              		.loc 1 65 0
+ 159              		.cfi_startproc
+ 160              		@ args = 0, pretend = 0, frame = 0
+ 161              		@ frame_needed = 0, uses_anonymous_args = 0
+ 162              		@ link register save eliminated.
+ 163              	.LVL12:
+  66:comm/timer.c  **** 	if (timer->in_list) {
+ 164              		.loc 1 66 0
+ 165 0000 0C30D0E5 		ldrb	r3, [r0, #12]	@ zero_extendqisi2
+ 166 0004 040013E3 		tst	r3, #4
+ 167 0008 1EFF2F01 		bxeq	lr
+  67:comm/timer.c  **** 		timer->active = 0;
+ 168              		.loc 1 67 0
+ 169 000c 0130C3E3 		bic	r3, r3, #1
+ 170 0010 0C30C0E5 		strb	r3, [r0, #12]
+  68:comm/timer.c  **** 		timer->in_list = 0;
+ 171              		.loc 1 68 0
+ 172 0014 0C30D0E5 		ldrb	r3, [r0, #12]	@ zero_extendqisi2
+ 173 0018 0430C3E3 		bic	r3, r3, #4
+ 174 001c 0C30C0E5 		strb	r3, [r0, #12]
+ 175              	.LVL13:
+ 176              	.LBB48:
+ 177              	.LBB49:
+  70:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** }
+  71:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  72:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /**
+  73:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * llist_add - add a new entry
+  74:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @new: new entry to be added
+  75:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @head: llist head to add it after
+  76:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+  77:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Insert a new entry after the specified head.
+  78:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * This is good for implementing stacks.
+  79:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+  80:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** static inline void llist_add(struct llist_head *_new, struct llist_head *head)
+  81:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** {
+  82:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	__llist_add(_new, head, head->next);
+  83:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** }
+  84:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  85:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /**
+  86:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * llist_add_tail - add a new entry
+  87:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @new: new entry to be added
+  88:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @head: llist head to add it before
+  89:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+  90:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Insert a new entry before the specified head.
+  91:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * This is useful for implementing queues.
+  92:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+  93:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** static inline void llist_add_tail(struct llist_head *_new, struct llist_head *head)
+  94:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** {
+  95:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	__llist_add(_new, head->prev, head);
+  96:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** }
+  97:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+  98:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /*
+  99:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Delete a llist entry by making the prev/next entries
+ 100:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * point to each other.
+ 101:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  *
+ 102:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * This is only for internal llist manipulation where we know
+ 103:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * the prev/next entries already!
+ 104:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+ 105:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** static inline void __llist_del(struct llist_head * prev, struct llist_head * next)
+ 106:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** {
+ 107:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	next->prev = prev;
+ 108:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	prev->next = next;
+ 109:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** }
+ 110:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 
+ 111:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** /**
+ 112:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * llist_del - deletes entry from llist.
+ 113:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * @entry: the element to delete from the llist.
+ 114:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * Note: llist_empty on entry does not return true after this, the entry is
+ 115:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  * in an undefined state.
+ 116:../../shared/libosmocore/include/osmocom/core/linuxlist.h ****  */
+ 117:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** static inline void llist_del(struct llist_head *entry)
+ 118:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** {
+ 119:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	__llist_del(entry->prev, entry->next);
+ 178              		.loc 2 119 0
+ 179 0020 0C0090E8 		ldmia	r0, {r2, r3}	@ phole ldm
+ 180              	.LVL14:
+ 181              	.LBB50:
+ 182              	.LBB51:
+ 107:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	next->prev = prev;
+ 183              		.loc 2 107 0
+ 184 0024 043082E5 		str	r3, [r2, #4]
+ 108:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	prev->next = next;
+ 185              		.loc 2 108 0
+ 186 0028 002083E5 		str	r2, [r3, #0]
+ 187              	.LBE51:
+ 188              	.LBE50:
+ 120:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	entry->next = (struct llist_head *)LLIST_POISON1;
+ 189              		.loc 2 120 0
+ 190 002c 0C309FE5 		ldr	r3, .L15
+ 191 0030 003080E5 		str	r3, [r0, #0]
+ 121:../../shared/libosmocore/include/osmocom/core/linuxlist.h **** 	entry->prev = (struct llist_head *)LLIST_POISON2;
+ 192              		.loc 2 121 0
+ 193 0034 08309FE5 		ldr	r3, .L15+4
+ 194 0038 043080E5 		str	r3, [r0, #4]
+ 195 003c 1EFF2FE1 		bx	lr
+ 196              	.L16:
+ 197              		.align	2
+ 198              	.L15:
+ 199 0040 00011000 		.word	1048832
+ 200 0044 00022000 		.word	2097664
+ 201              	.LBE49:
+ 202              	.LBE48:
+ 203              		.cfi_endproc
+ 204              	.LFE15:
+ 206              		.section	.text.osmo_timer_pending,"ax",%progbits
+ 207              		.align	2
+ 208              		.global	osmo_timer_pending
+ 210              	osmo_timer_pending:
+ 211              	.LFB16:
+  74:comm/timer.c  **** {
+ 212              		.loc 1 74 0
+ 213              		.cfi_startproc
+ 214              		@ args = 0, pretend = 0, frame = 0
+ 215              		@ frame_needed = 0, uses_anonymous_args = 0
+ 216              		@ link register save eliminated.
+ 217              	.LVL15:
+  75:comm/timer.c  **** 	return timer->active;
+ 218              		.loc 1 75 0
+ 219 0000 0C00D0E5 		ldrb	r0, [r0, #12]	@ zero_extendqisi2
+ 220              	.LVL16:
+  76:comm/timer.c  **** }
+ 221              		.loc 1 76 0
+ 222 0004 010000E2 		and	r0, r0, #1
+ 223 0008 1EFF2FE1 		bx	lr
+ 224              		.cfi_endproc
+ 225              	.LFE16:
+ 227              		.section	.text.osmo_timers_update,"ax",%progbits
+ 228              		.align	2
+ 229              		.global	osmo_timers_update
+ 231              	osmo_timers_update:
+ 232              	.LFB17:
+ 133:comm/timer.c  **** {
+ 233              		.loc 1 133 0
+ 234              		.cfi_startproc
+ 235              		@ args = 0, pretend = 0, frame = 0
+ 236              		@ frame_needed = 0, uses_anonymous_args = 0
+ 237              	.LVL17:
+ 238              	.LBB52:
+ 152:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 239              		.loc 1 152 0
+ 240 0000 CC209FE5 		ldr	r2, .L28
+ 241              	.LBE52:
+ 133:comm/timer.c  **** {
+ 242              		.loc 1 133 0
+ 243 0004 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 244              	.LCFI1:
+ 245              		.cfi_def_cfa_offset 16
+ 246              	.LBB53:
+ 152:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 247              		.loc 1 152 0
+ 248 0008 003092E5 		ldr	r3, [r2, #0]
+ 249              	.LVL18:
+ 250 000c 030000EA 		b	.L19
+ 251              		.cfi_offset 14, -4
+ 252              		.cfi_offset 6, -8
+ 253              		.cfi_offset 5, -12
+ 254              		.cfi_offset 4, -16
+ 255              	.LVL19:
+ 256              	.L20:
+ 257              	.LBE53:
+ 153:comm/timer.c  **** 		timer->handled = 0;
+ 258              		.loc 1 153 0 discriminator 2
+ 259 0010 0C10D3E5 		ldrb	r1, [r3, #12]	@ zero_extendqisi2
+ 260 0014 0210C1E3 		bic	r1, r1, #2
+ 261 0018 0C10C3E5 		strb	r1, [r3, #12]
+ 262              	.LBB54:
+ 152:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 263              		.loc 1 152 0 discriminator 2
+ 264 001c 003093E5 		ldr	r3, [r3, #0]
+ 265              	.LVL20:
+ 266              	.L19:
+ 267              	.LBE54:
+ 152:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 268              		.loc 1 152 0 is_stmt 0 discriminator 1
+ 269 0020 020053E1 		cmp	r3, r2
+ 270 0024 F9FFFF1A 		bne	.L20
+ 271              	.LBB55:
+ 157:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 272              		.loc 1 157 0 is_stmt 1
+ 273 0028 A4409FE5 		ldr	r4, .L28
+ 274              	.LBE55:
+ 158:comm/timer.c  **** 		if (!timer->handled && time_before(timer->expires, jiffies)) {
+ 275              		.loc 1 158 0
+ 276 002c A4609FE5 		ldr	r6, .L28+4
+ 152:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 277              		.loc 1 152 0
+ 278 0030 0050A0E3 		mov	r5, #0
+ 279              	.LVL21:
+ 280              	.L23:
+ 281              	.LBB56:
+ 157:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 282              		.loc 1 157 0
+ 283 0034 000094E5 		ldr	r0, [r4, #0]
+ 284              	.LVL22:
+ 285 0038 0030A0E1 		mov	r3, r0
+ 286 003c 130000EA 		b	.L21
+ 287              	.LVL23:
+ 288              	.L24:
+ 289              	.LBE56:
+ 158:comm/timer.c  **** 		if (!timer->handled && time_before(timer->expires, jiffies)) {
+ 290              		.loc 1 158 0
+ 291 0040 0C20D3E5 		ldrb	r2, [r3, #12]	@ zero_extendqisi2
+ 292 0044 020012E3 		tst	r2, #2
+ 293 0048 0210A0E1 		mov	r1, r2
+ 294 004c 0E00001A 		bne	.L22
+ 158:comm/timer.c  **** 		if (!timer->handled && time_before(timer->expires, jiffies)) {
+ 295              		.loc 1 158 0 is_stmt 0 discriminator 1
+ 296 0050 002096E5 		ldr	r2, [r6, #0]
+ 297 0054 08C093E5 		ldr	ip, [r3, #8]
+ 298 0058 0C2062E0 		rsb	r2, r2, ip
+ 299 005c 000052E3 		cmp	r2, #0
+ 300 0060 090000AA 		bge	.L22
+ 159:comm/timer.c  **** 			timer->handled = 1;
+ 301              		.loc 1 159 0 is_stmt 1
+ 302 0064 021081E3 		orr	r1, r1, #2
+ 303 0068 0C10C3E5 		strb	r1, [r3, #12]
+ 160:comm/timer.c  **** 			timer->active = 0;
+ 304              		.loc 1 160 0
+ 305 006c 0C20D3E5 		ldrb	r2, [r3, #12]	@ zero_extendqisi2
+ 306 0070 0120C2E3 		bic	r2, r2, #1
+ 307 0074 0C20C3E5 		strb	r2, [r3, #12]
+ 161:comm/timer.c  **** 			(*timer->cb)(timer->data);
+ 308              		.loc 1 161 0
+ 309 0078 140093E5 		ldr	r0, [r3, #20]
+ 310 007c 0FE0A0E1 		mov	lr, pc
+ 311 0080 10F093E5 		ldr	pc, [r3, #16]
+ 312              	.LVL24:
+ 162:comm/timer.c  **** 			work = 1;
+ 313              		.loc 1 162 0
+ 314 0084 0150A0E3 		mov	r5, #1
+ 163:comm/timer.c  **** 			goto restart;
+ 315              		.loc 1 163 0
+ 316 0088 E9FFFFEA 		b	.L23
+ 317              	.LVL25:
+ 318              	.L22:
+ 319              	.LBB57:
+ 157:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 320              		.loc 1 157 0
+ 321 008c 003093E5 		ldr	r3, [r3, #0]
+ 322              	.LVL26:
+ 323              	.L21:
+ 324              	.LBE57:
+ 157:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 325              		.loc 1 157 0 is_stmt 0 discriminator 1
+ 326 0090 040053E1 		cmp	r3, r4
+ 327 0094 E9FFFF1A 		bne	.L24
+ 328              	.LVL27:
+ 329              	.LBB58:
+ 167:comm/timer.c  **** 	llist_for_each_entry_safe(timer, tmp, &timer_list, entry) {
+ 330              		.loc 1 167 0 is_stmt 1
+ 331 0098 004090E5 		ldr	r4, [r0, #0]
+ 332              	.LVL28:
+ 333              	.LBE58:
+ 334 009c 30609FE5 		ldr	r6, .L28
+ 335 00a0 070000EA 		b	.L25
+ 336              	.LVL29:
+ 337              	.L27:
+ 168:comm/timer.c  **** 		timer->handled = 0;
+ 338              		.loc 1 168 0
+ 339 00a4 0C30D0E5 		ldrb	r3, [r0, #12]	@ zero_extendqisi2
+ 340 00a8 0230C3E3 		bic	r3, r3, #2
+ 341 00ac 0C30C0E5 		strb	r3, [r0, #12]
+ 169:comm/timer.c  **** 		if (!timer->active) {
+ 342              		.loc 1 169 0
+ 343 00b0 0C30D0E5 		ldrb	r3, [r0, #12]	@ zero_extendqisi2
+ 344 00b4 010013E3 		tst	r3, #1
+ 170:comm/timer.c  **** 			osmo_timer_del(timer);
+ 345              		.loc 1 170 0
+ 346 00b8 FEFFFF0B 		bleq	osmo_timer_del
+ 347              	.LVL30:
+ 348              	.L26:
+ 349              	.LBB59:
+ 167:comm/timer.c  **** 	llist_for_each_entry_safe(timer, tmp, &timer_list, entry) {
+ 350              		.loc 1 167 0
+ 351 00bc 0400A0E1 		mov	r0, r4
+ 352 00c0 004094E5 		ldr	r4, [r4, #0]
+ 353              	.LVL31:
+ 354              	.L25:
+ 355              	.LBE59:
+ 167:comm/timer.c  **** 	llist_for_each_entry_safe(timer, tmp, &timer_list, entry) {
+ 356              		.loc 1 167 0 is_stmt 0 discriminator 1
+ 357 00c4 060050E1 		cmp	r0, r6
+ 358 00c8 F5FFFF1A 		bne	.L27
+ 175:comm/timer.c  **** }
+ 359              		.loc 1 175 0 is_stmt 1
+ 360 00cc 0500A0E1 		mov	r0, r5
+ 361              	.LVL32:
+ 362 00d0 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 363              	.L29:
+ 364              		.align	2
+ 365              	.L28:
+ 366 00d4 00000000 		.word	.LANCHOR0
+ 367 00d8 00000000 		.word	jiffies
+ 368              		.cfi_endproc
+ 369              	.LFE17:
+ 371              		.section	.text.osmo_timers_check,"ax",%progbits
+ 372              		.align	2
+ 373              		.global	osmo_timers_check
+ 375              	osmo_timers_check:
+ 376              	.LFB18:
+ 178:comm/timer.c  **** {
+ 377              		.loc 1 178 0
+ 378              		.cfi_startproc
+ 379              		@ args = 0, pretend = 0, frame = 0
+ 380              		@ frame_needed = 0, uses_anonymous_args = 0
+ 381              		@ link register save eliminated.
+ 382              	.LVL33:
+ 383              	.LBB60:
+ 182:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 384              		.loc 1 182 0
+ 385 0000 1C209FE5 		ldr	r2, .L33
+ 180:comm/timer.c  **** 	int i = 0;
+ 386              		.loc 1 180 0
+ 387 0004 0000A0E3 		mov	r0, #0
+ 182:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 388              		.loc 1 182 0
+ 389 0008 003092E5 		ldr	r3, [r2, #0]
+ 390              	.LVL34:
+ 391 000c 010000EA 		b	.L31
+ 392              	.LVL35:
+ 393              	.L32:
+ 394              	.LBE60:
+ 395              	.LBB61:
+ 182:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 396              		.loc 1 182 0 is_stmt 0 discriminator 2
+ 397 0010 003093E5 		ldr	r3, [r3, #0]
+ 398              	.LVL36:
+ 399              	.LBE61:
+ 183:comm/timer.c  **** 		i++;
+ 400              		.loc 1 183 0 is_stmt 1 discriminator 2
+ 401 0014 010080E2 		add	r0, r0, #1
+ 402              	.LVL37:
+ 403              	.L31:
+ 182:comm/timer.c  **** 	llist_for_each_entry(timer, &timer_list, entry) {
+ 404              		.loc 1 182 0 discriminator 1
+ 405 0018 020053E1 		cmp	r3, r2
+ 406 001c FBFFFF1A 		bne	.L32
+ 186:comm/timer.c  **** }
+ 407              		.loc 1 186 0
+ 408 0020 1EFF2FE1 		bx	lr
+ 409              	.L34:
+ 410              		.align	2
+ 411              	.L33:
+ 412 0024 00000000 		.word	.LANCHOR0
+ 413              		.cfi_endproc
+ 414              	.LFE18:
+ 416              		.section	.text.timer_init,"ax",%progbits
+ 417              		.align	2
+ 418              		.global	timer_init
+ 420              	timer_init:
+ 421              	.LFB20:
+ 195:comm/timer.c  **** 
+ 196:comm/timer.c  **** void timer_init(void)
+ 197:comm/timer.c  **** {
+ 422              		.loc 1 197 0
+ 423              		.cfi_startproc
+ 424              		@ args = 0, pretend = 0, frame = 0
+ 425              		@ frame_needed = 0, uses_anonymous_args = 0
+ 426 0000 04E02DE5 		str	lr, [sp, #-4]!
+ 427              	.LCFI2:
+ 428              		.cfi_def_cfa_offset 4
+ 198:comm/timer.c  **** 	/* configure TIMER2 for our purpose */
+ 199:comm/timer.c  **** 	hwtimer_enable(2, 1);
+ 429              		.loc 1 199 0
+ 430 0004 0200A0E3 		mov	r0, #2
+ 431 0008 0110A0E3 		mov	r1, #1
+ 432              		.cfi_offset 14, -4
+ 433 000c FEFFFFEB 		bl	hwtimer_enable
+ 200:comm/timer.c  **** 	/* The timer runs at 13MHz / 32, i.e. 406.25kHz */
+ 201:comm/timer.c  **** #if (HZ == 100)
+ 202:comm/timer.c  **** 	hwtimer_load(2, 4062);
+ 434              		.loc 1 202 0
+ 435 0010 0200A0E3 		mov	r0, #2
+ 436 0014 48109FE5 		ldr	r1, .L36
+ 437 0018 FEFFFFEB 		bl	hwtimer_load
+ 203:comm/timer.c  **** 	hwtimer_config(2, 0, 1);
+ 438              		.loc 1 203 0
+ 439 001c 0120A0E3 		mov	r2, #1
+ 440 0020 0200A0E3 		mov	r0, #2
+ 441 0024 0010A0E3 		mov	r1, #0
+ 442 0028 FEFFFFEB 		bl	hwtimer_config
+ 204:comm/timer.c  **** #elif (HZ == 10)
+ 205:comm/timer.c  **** 	/* prescaler 4, 1015 ticks until expiry */
+ 206:comm/timer.c  **** 	hwtimer_load(2, 1015);
+ 207:comm/timer.c  **** 	hwtimer_config(2, 4, 1);
+ 208:comm/timer.c  **** #endif
+ 209:comm/timer.c  **** 	hwtimer_enable(2, 1);
+ 443              		.loc 1 209 0
+ 444 002c 0200A0E3 		mov	r0, #2
+ 445 0030 0110A0E3 		mov	r1, #1
+ 446 0034 FEFFFFEB 		bl	hwtimer_enable
+ 210:comm/timer.c  **** 
+ 211:comm/timer.c  **** 	/* register interrupt handler with default priority, EDGE triggered */
+ 212:comm/timer.c  **** 	irq_register_handler(IRQ_TIMER2, &timer_irq);
+ 447              		.loc 1 212 0
+ 448 0038 0200A0E3 		mov	r0, #2
+ 449 003c 24109FE5 		ldr	r1, .L36+4
+ 450 0040 FEFFFFEB 		bl	irq_register_handler
+ 213:comm/timer.c  **** 	irq_config(IRQ_TIMER2, 0, 1, -1);
+ 451              		.loc 1 213 0
+ 452 0044 0200A0E3 		mov	r0, #2
+ 453 0048 0010A0E3 		mov	r1, #0
+ 454 004c 0120A0E3 		mov	r2, #1
+ 455 0050 0030E0E3 		mvn	r3, #0
+ 456 0054 FEFFFFEB 		bl	irq_config
+ 214:comm/timer.c  **** 	irq_enable(IRQ_TIMER2);
+ 457              		.loc 1 214 0
+ 458 0058 0200A0E3 		mov	r0, #2
+ 215:comm/timer.c  **** }
+ 459              		.loc 1 215 0
+ 460 005c 04E09DE4 		ldr	lr, [sp], #4
+ 214:comm/timer.c  **** 	irq_enable(IRQ_TIMER2);
+ 461              		.loc 1 214 0
+ 462 0060 FEFFFFEA 		b	irq_enable
+ 463              	.L37:
+ 464              		.align	2
+ 465              	.L36:
+ 466 0064 DE0F0000 		.word	4062
+ 467 0068 00000000 		.word	timer_irq
+ 468              		.cfi_endproc
+ 469              	.LFE20:
+ 471              		.comm	jiffies,4,4
+ 472              		.data
+ 473              		.align	2
+ 474              		.set	.LANCHOR0,. + 0
+ 477              	timer_list:
+ 478 0000 00000000 		.word	timer_list
+ 479 0004 00000000 		.word	timer_list
+ 480              		.text
+ 481              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 timer.c
+     /tmp/ccKHmYOT.s:12     .text.timer_irq:0000000000000000 $a
+     /tmp/ccKHmYOT.s:14     .text.timer_irq:0000000000000000 timer_irq
+     /tmp/ccKHmYOT.s:35     .text.timer_irq:0000000000000014 $d
+                            *COM*:0000000000000004 jiffies
+     /tmp/ccKHmYOT.s:40     .text.osmo_timer_add:0000000000000000 $a
+     /tmp/ccKHmYOT.s:43     .text.osmo_timer_add:0000000000000000 osmo_timer_add
+     /tmp/ccKHmYOT.s:99     .text.osmo_timer_add:0000000000000050 $d
+     /tmp/ccKHmYOT.s:108    .text.osmo_timer_schedule:0000000000000000 $a
+     /tmp/ccKHmYOT.s:111    .text.osmo_timer_schedule:0000000000000000 osmo_timer_schedule
+     /tmp/ccKHmYOT.s:148    .text.osmo_timer_schedule:0000000000000030 $d
+     /tmp/ccKHmYOT.s:153    .text.osmo_timer_del:0000000000000000 $a
+     /tmp/ccKHmYOT.s:156    .text.osmo_timer_del:0000000000000000 osmo_timer_del
+     /tmp/ccKHmYOT.s:199    .text.osmo_timer_del:0000000000000040 $d
+     /tmp/ccKHmYOT.s:207    .text.osmo_timer_pending:0000000000000000 $a
+     /tmp/ccKHmYOT.s:210    .text.osmo_timer_pending:0000000000000000 osmo_timer_pending
+     /tmp/ccKHmYOT.s:228    .text.osmo_timers_update:0000000000000000 $a
+     /tmp/ccKHmYOT.s:231    .text.osmo_timers_update:0000000000000000 osmo_timers_update
+     /tmp/ccKHmYOT.s:366    .text.osmo_timers_update:00000000000000d4 $d
+     /tmp/ccKHmYOT.s:372    .text.osmo_timers_check:0000000000000000 $a
+     /tmp/ccKHmYOT.s:375    .text.osmo_timers_check:0000000000000000 osmo_timers_check
+     /tmp/ccKHmYOT.s:412    .text.osmo_timers_check:0000000000000024 $d
+     /tmp/ccKHmYOT.s:417    .text.timer_init:0000000000000000 $a
+     /tmp/ccKHmYOT.s:420    .text.timer_init:0000000000000000 timer_init
+     /tmp/ccKHmYOT.s:466    .text.timer_init:0000000000000064 $d
+     /tmp/ccKHmYOT.s:473    .data:0000000000000000 $d
+     /tmp/ccKHmYOT.s:477    .data:0000000000000000 timer_list
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+keypad_poll
+__divsi3
+hwtimer_enable
+hwtimer_load
+hwtimer_config
+irq_register_handler
+irq_config
+irq_enable

@@ -1,0 +1,722 @@
+   1              		.file	"irq.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text._irq_enable,"ax",%progbits
+  12              		.align	2
+  14              	_irq_enable:
+  15              	.LFB0:
+  16              		.file 1 "calypso/irq.c"
+   1:calypso/irq.c **** /* Driver for Calypso IRQ controller */
+   2:calypso/irq.c **** 
+   3:calypso/irq.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:calypso/irq.c ****  *
+   5:calypso/irq.c ****  * All Rights Reserved
+   6:calypso/irq.c ****  *
+   7:calypso/irq.c ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/irq.c ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/irq.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/irq.c ****  * (at your option) any later version.
+  11:calypso/irq.c ****  *
+  12:calypso/irq.c ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/irq.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/irq.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/irq.c ****  * GNU General Public License for more details.
+  16:calypso/irq.c ****  *
+  17:calypso/irq.c ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/irq.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/irq.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/irq.c ****  *
+  21:calypso/irq.c ****  */
+  22:calypso/irq.c **** 
+  23:calypso/irq.c **** #include <stdint.h>
+  24:calypso/irq.c **** #include <stdio.h>
+  25:calypso/irq.c **** 
+  26:calypso/irq.c **** #include <debug.h>
+  27:calypso/irq.c **** #include <memory.h>
+  28:calypso/irq.c **** #include <arm.h>
+  29:calypso/irq.c **** #include <calypso/irq.h>
+  30:calypso/irq.c **** 
+  31:calypso/irq.c **** #define BASE_ADDR_IRQ	0xfffffa00
+  32:calypso/irq.c **** 
+  33:calypso/irq.c **** enum irq_reg {
+  34:calypso/irq.c **** 	IT_REG1		= 0x00,
+  35:calypso/irq.c **** 	IT_REG2		= 0x02,
+  36:calypso/irq.c **** 	MASK_IT_REG1	= 0x08,
+  37:calypso/irq.c **** 	MASK_IT_REG2	= 0x0a,
+  38:calypso/irq.c **** 	IRQ_NUM		= 0x10,
+  39:calypso/irq.c **** 	FIQ_NUM		= 0x12,
+  40:calypso/irq.c **** 	IRQ_CTRL	= 0x14,
+  41:calypso/irq.c **** };
+  42:calypso/irq.c **** 
+  43:calypso/irq.c **** #define ILR_IRQ(x)	(0x20 + (x*2))
+  44:calypso/irq.c **** #define IRQ_REG(x)	((void *)BASE_ADDR_IRQ + (x))
+  45:calypso/irq.c **** 
+  46:calypso/irq.c **** #define NR_IRQS	32
+  47:calypso/irq.c **** 
+  48:calypso/irq.c **** static uint8_t default_irq_prio[] = {
+  49:calypso/irq.c **** 	[IRQ_WATCHDOG]		= 0xff,
+  50:calypso/irq.c **** 	[IRQ_TIMER1]		= 0xff,
+  51:calypso/irq.c **** 	[IRQ_TIMER2]		= 0xff,
+  52:calypso/irq.c **** 	[IRQ_TSP_RX]		= 0,
+  53:calypso/irq.c **** 	[IRQ_TPU_FRAME]		= 3,
+  54:calypso/irq.c **** 	[IRQ_TPU_PAGE]		= 0xff,
+  55:calypso/irq.c **** 	[IRQ_SIMCARD]		= 0xff,
+  56:calypso/irq.c **** 	[IRQ_UART_MODEM]	= 8,
+  57:calypso/irq.c **** 	[IRQ_KEYPAD_GPIO]	= 4,
+  58:calypso/irq.c **** 	[IRQ_RTC_TIMER]		= 9,
+  59:calypso/irq.c **** 	[IRQ_RTC_ALARM_I2C]	= 10,
+  60:calypso/irq.c **** 	[IRQ_ULPD_GAUGING]	= 2,
+  61:calypso/irq.c **** 	[IRQ_EXTERNAL]		= 12,
+  62:calypso/irq.c **** 	[IRQ_SPI]		= 0xff,
+  63:calypso/irq.c **** 	[IRQ_DMA]		= 0xff,
+  64:calypso/irq.c **** 	[IRQ_API]		= 0xff,
+  65:calypso/irq.c **** 	[IRQ_SIM_DETECT]	= 0,
+  66:calypso/irq.c **** 	[IRQ_EXTERNAL_FIQ]	= 7,
+  67:calypso/irq.c **** 	[IRQ_UART_IRDA]		= 2,
+  68:calypso/irq.c **** 	[IRQ_ULPD_GSM_TIMER]	= 1,
+  69:calypso/irq.c **** 	[IRQ_GEA]		= 0xff,
+  70:calypso/irq.c **** };
+  71:calypso/irq.c **** 
+  72:calypso/irq.c **** static irq_handler *irq_handlers[NR_IRQS];
+  73:calypso/irq.c **** 
+  74:calypso/irq.c **** static void _irq_enable(enum irq_nr nr, int enable)
+  75:calypso/irq.c **** {
+  17              		.loc 1 75 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+  76:calypso/irq.c **** 	uint16_t *reg = IRQ_REG(MASK_IT_REG1);
+  77:calypso/irq.c **** 	uint16_t val;
+  78:calypso/irq.c **** 
+  79:calypso/irq.c **** 	if (nr > 15) {
+  23              		.loc 1 79 0
+  24 0000 0F0050E3 		cmp	r0, #15
+  25              	.LVL1:
+  80:calypso/irq.c **** 		reg = IRQ_REG(MASK_IT_REG2);
+  26              		.loc 1 80 0
+  27 0004 2C309F85 		ldrhi	r3, .L6
+  76:calypso/irq.c **** 	uint16_t *reg = IRQ_REG(MASK_IT_REG1);
+  28              		.loc 1 76 0
+  29 0008 2C309F95 		ldrls	r3, .L6+4
+  81:calypso/irq.c **** 		nr -= 16;
+  30              		.loc 1 81 0
+  31 000c 10004082 		subhi	r0, r0, #16
+  32              	.LVL2:
+  82:calypso/irq.c **** 	}
+  83:calypso/irq.c **** 
+  84:calypso/irq.c **** 	val = readw(reg);
+  33              		.loc 1 84 0
+  34 0010 B020D3E1 		ldrh	r2, [r3, #0]
+  35              	.LVL3:
+  85:calypso/irq.c **** 	if (enable)
+  36              		.loc 1 85 0
+  37 0014 000051E3 		cmp	r1, #0
+  86:calypso/irq.c **** 		val &= ~(1 << nr);
+  87:calypso/irq.c **** 	else
+  88:calypso/irq.c **** 		val |= (1 << nr);
+  38              		.loc 1 88 0
+  39 0018 0110A003 		moveq	r1, #1
+  40              	.LVL4:
+  41 001c 11008201 		orreq	r0, r2, r1, asl r0
+  42              	.LVL5:
+  86:calypso/irq.c **** 		val &= ~(1 << nr);
+  43              		.loc 1 86 0
+  44 0020 0110A013 		movne	r1, #1
+  45 0024 1100C211 		bicne	r0, r2, r1, asl r0
+  46              	.LVL6:
+  47              		.loc 1 88 0
+  48 0028 0008A001 		moveq	r0, r0, asl #16
+  49 002c 2008A001 		moveq	r0, r0, lsr #16
+  50              	.LVL7:
+  89:calypso/irq.c **** 	writew(val, reg);
+  51              		.loc 1 89 0
+  52 0030 B000C3E1 		strh	r0, [r3, #0]	@ movhi
+  90:calypso/irq.c **** }
+  53              		.loc 1 90 0
+  54 0034 1EFF2FE1 		bx	lr
+  55              	.L7:
+  56              		.align	2
+  57              	.L6:
+  58 0038 0AFAFFFF 		.word	-1526
+  59 003c 08FAFFFF 		.word	-1528
+  60              		.cfi_endproc
+  61              	.LFE0:
+  63              		.section	.text.irq_enable,"ax",%progbits
+  64              		.align	2
+  65              		.global	irq_enable
+  67              	irq_enable:
+  68              	.LFB1:
+  91:calypso/irq.c **** 
+  92:calypso/irq.c **** void irq_enable(enum irq_nr nr)
+  93:calypso/irq.c **** {
+  69              		.loc 1 93 0
+  70              		.cfi_startproc
+  71              		@ args = 0, pretend = 0, frame = 0
+  72              		@ frame_needed = 0, uses_anonymous_args = 0
+  73              		@ link register save eliminated.
+  74              	.LVL8:
+  94:calypso/irq.c **** 	_irq_enable(nr, 1);
+  75              		.loc 1 94 0
+  76 0000 0110A0E3 		mov	r1, #1
+  95:calypso/irq.c **** }
+  77              		.loc 1 95 0
+  94:calypso/irq.c **** 	_irq_enable(nr, 1);
+  78              		.loc 1 94 0
+  79 0004 FEFFFFEA 		b	_irq_enable
+  80              		.cfi_endproc
+  81              	.LFE1:
+  83              		.section	.text.irq_disable,"ax",%progbits
+  84              		.align	2
+  85              		.global	irq_disable
+  87              	irq_disable:
+  88              	.LFB2:
+  96:calypso/irq.c **** 
+  97:calypso/irq.c **** void irq_disable(enum irq_nr nr)
+  98:calypso/irq.c **** {
+  89              		.loc 1 98 0
+  90              		.cfi_startproc
+  91              		@ args = 0, pretend = 0, frame = 0
+  92              		@ frame_needed = 0, uses_anonymous_args = 0
+  93              		@ link register save eliminated.
+  94              	.LVL9:
+  99:calypso/irq.c **** 	_irq_enable(nr, 0);
+  95              		.loc 1 99 0
+  96 0000 0010A0E3 		mov	r1, #0
+ 100:calypso/irq.c **** }
+  97              		.loc 1 100 0
+  99:calypso/irq.c **** 	_irq_enable(nr, 0);
+  98              		.loc 1 99 0
+  99 0004 FEFFFFEA 		b	_irq_enable
+ 100              		.cfi_endproc
+ 101              	.LFE2:
+ 103              		.section	.text.irq_config,"ax",%progbits
+ 104              		.align	2
+ 105              		.global	irq_config
+ 107              	irq_config:
+ 108              	.LFB3:
+ 101:calypso/irq.c **** 
+ 102:calypso/irq.c **** void irq_config(enum irq_nr nr, int fiq, int edge, int8_t prio)
+ 103:calypso/irq.c **** {
+ 109              		.loc 1 103 0
+ 110              		.cfi_startproc
+ 111              		@ args = 0, pretend = 0, frame = 0
+ 112              		@ frame_needed = 0, uses_anonymous_args = 0
+ 113              		@ link register save eliminated.
+ 114              	.LVL10:
+ 115              		.loc 1 103 0
+ 116 0000 033CA0E1 		mov	r3, r3, asl #24
+ 117              	.LVL11:
+ 118 0004 433CA0E1 		mov	r3, r3, asr #24
+ 104:calypso/irq.c **** 	uint16_t val;
+ 105:calypso/irq.c **** 
+ 106:calypso/irq.c **** 	if (prio == -1)
+ 119              		.loc 1 106 0
+ 120 0008 010073E3 		cmn	r3, #1
+ 107:calypso/irq.c **** 		prio = default_irq_prio[nr];
+ 121              		.loc 1 107 0
+ 122 000c 30309F05 		ldreq	r3, .L14
+ 123 0010 D0309301 		ldreqsb	r3, [r3, r0]
+ 124              	.LVL12:
+ 108:calypso/irq.c **** 
+ 109:calypso/irq.c **** 	if (prio > 31)
+ 110:calypso/irq.c **** 		prio = 31;
+ 111:calypso/irq.c **** 
+ 112:calypso/irq.c **** 	val = prio << 2;
+ 125              		.loc 1 112 0
+ 126 0014 1F0053E3 		cmp	r3, #31
+ 127 0018 1F30A0A3 		movge	r3, #31
+ 128              	.LVL13:
+ 129 001c 0339A0E1 		mov	r3, r3, asl #18
+ 130 0020 2338A0E1 		mov	r3, r3, lsr #16
+ 131              	.LVL14:
+ 113:calypso/irq.c **** 	if (edge)
+ 132              		.loc 1 113 0
+ 133 0024 000052E3 		cmp	r2, #0
+ 114:calypso/irq.c **** 		val |= 0x02;
+ 134              		.loc 1 114 0
+ 135 0028 02308313 		orrne	r3, r3, #2
+ 136              	.LVL15:
+ 115:calypso/irq.c **** 	if (fiq)
+ 116:calypso/irq.c **** 		val |= 0x01;
+ 117:calypso/irq.c **** 
+ 118:calypso/irq.c **** 	writew(val, IRQ_REG(ILR_IRQ(nr)));
+ 137              		.loc 1 118 0
+ 138 002c 8000A0E1 		mov	r0, r0, asl #1
+ 139              	.LVL16:
+ 115:calypso/irq.c **** 	if (fiq)
+ 140              		.loc 1 115 0
+ 141 0030 000051E3 		cmp	r1, #0
+ 116:calypso/irq.c **** 		val |= 0x01;
+ 142              		.loc 1 116 0
+ 143 0034 01308313 		orrne	r3, r3, #1
+ 144              	.LVL17:
+ 145              		.loc 1 118 0
+ 146 0038 5E0E40E2 		sub	r0, r0, #1504
+ 147 003c B030C0E1 		strh	r3, [r0, #0]	@ movhi
+ 119:calypso/irq.c **** }
+ 148              		.loc 1 119 0
+ 149 0040 1EFF2FE1 		bx	lr
+ 150              	.L15:
+ 151              		.align	2
+ 152              	.L14:
+ 153 0044 00000000 		.word	.LANCHOR0
+ 154              		.cfi_endproc
+ 155              	.LFE3:
+ 157              		.section	.text.irq,"ax",%progbits
+ 158              		.align	2
+ 159              		.global	irq
+ 161              	irq:
+ 162              	.LFB4:
+ 120:calypso/irq.c **** 
+ 121:calypso/irq.c **** /* Entry point for interrupts */
+ 122:calypso/irq.c **** void irq(void)
+ 123:calypso/irq.c **** {
+ 163              		.loc 1 123 0
+ 164              		.cfi_startproc
+ 165              		@ args = 0, pretend = 0, frame = 0
+ 166              		@ frame_needed = 0, uses_anonymous_args = 0
+ 167 0000 04E02DE5 		str	lr, [sp, #-4]!
+ 168              	.LCFI0:
+ 169              		.cfi_def_cfa_offset 4
+ 124:calypso/irq.c **** 	uint8_t num, tmp;
+ 125:calypso/irq.c **** 	irq_handler *handler;
+ 126:calypso/irq.c **** 
+ 127:calypso/irq.c **** #if 1
+ 128:calypso/irq.c **** 	/* Hardware interrupt detection mode */
+ 129:calypso/irq.c **** 	num = readb(IRQ_REG(IRQ_NUM)) & 0x1f;
+ 170              		.loc 1 129 0
+ 171 0004 053CE0E3 		mvn	r3, #1280
+ 172 0008 EF0053E5 		ldrb	r0, [r3, #-239]	@ zero_extendqisi2
+ 130:calypso/irq.c **** 
+ 131:calypso/irq.c **** 	printd("i%02x\n", num);
+ 132:calypso/irq.c **** 
+ 133:calypso/irq.c **** 	handler = irq_handlers[num];
+ 173              		.loc 1 133 0
+ 174 000c 24309FE5 		ldr	r3, .L18
+ 129:calypso/irq.c **** 	num = readb(IRQ_REG(IRQ_NUM)) & 0x1f;
+ 175              		.loc 1 129 0
+ 176 0010 1F0000E2 		and	r0, r0, #31
+ 177              	.LVL18:
+ 178              		.loc 1 133 0
+ 179 0014 003193E7 		ldr	r3, [r3, r0, asl #2]
+ 180              	.LVL19:
+ 134:calypso/irq.c **** 
+ 135:calypso/irq.c **** 	if (handler)
+ 181              		.loc 1 135 0
+ 182 0018 000053E3 		cmp	r3, #0
+ 183              		.cfi_offset 14, -4
+ 136:calypso/irq.c **** 		handler(num);
+ 184              		.loc 1 136 0
+ 185 001c 0FE0A011 		movne	lr, pc
+ 186 0020 13FF2F11 		bxne	r3
+ 187              	.LVL20:
+ 188              	.L17:
+ 137:calypso/irq.c **** #else
+ 138:calypso/irq.c **** 	/* Software interrupt detection mode */
+ 139:calypso/irq.c **** 	{
+ 140:calypso/irq.c **** 		uint16_t it_reg, mask_reg;
+ 141:calypso/irq.c **** 		uint32_t irqs;
+ 142:calypso/irq.c **** 
+ 143:calypso/irq.c **** 		it_reg = readw(IRQ_REG(IT_REG1));
+ 144:calypso/irq.c **** 		mask_reg = readw(IRQ_REG(MASK_IT_REG1));
+ 145:calypso/irq.c **** 		irqs = it_reg & ~mask_reg;
+ 146:calypso/irq.c **** 
+ 147:calypso/irq.c **** 		it_reg = readw(IRQ_REG(IT_REG2));
+ 148:calypso/irq.c **** 		mask_reg = readw(IRQ_REG(MASK_IT_REG2));
+ 149:calypso/irq.c **** 		irqs |= (it_reg & ~mask_reg) << 16;
+ 150:calypso/irq.c **** 
+ 151:calypso/irq.c **** 		for (num = 0; num < 32; num++) {
+ 152:calypso/irq.c **** 			if (irqs & (1 << num)) {
+ 153:calypso/irq.c **** 				printd("i%d\n", num);
+ 154:calypso/irq.c **** 				handler = irq_handlers[num];
+ 155:calypso/irq.c **** 				if (handler)
+ 156:calypso/irq.c **** 					handler(num);
+ 157:calypso/irq.c **** 				/* clear this interrupt */
+ 158:calypso/irq.c **** 				if (num < 16)
+ 159:calypso/irq.c **** 					writew(~(1 << num), IRQ_REG(IT_REG1));
+ 160:calypso/irq.c **** 				else
+ 161:calypso/irq.c **** 					writew(~(1 << (num-16)), IRQ_REG(IT_REG2));
+ 162:calypso/irq.c **** 			}
+ 163:calypso/irq.c **** 		}
+ 164:calypso/irq.c **** 		dputchar('\n');
+ 165:calypso/irq.c **** 	}
+ 166:calypso/irq.c **** #endif
+ 167:calypso/irq.c **** 	/* Start new IRQ agreement */
+ 168:calypso/irq.c **** 	tmp = readb(IRQ_REG(IRQ_CTRL));
+ 189              		.loc 1 168 0
+ 190 0024 053CE0E3 		mvn	r3, #1280
+ 191 0028 EB2053E5 		ldrb	r2, [r3, #-235]	@ zero_extendqisi2
+ 192              	.LVL21:
+ 169:calypso/irq.c **** 	tmp |= 0x01;
+ 193              		.loc 1 169 0
+ 194 002c 012082E3 		orr	r2, r2, #1
+ 195              	.LVL22:
+ 170:calypso/irq.c **** 	writeb(tmp, IRQ_REG(IRQ_CTRL));
+ 196              		.loc 1 170 0
+ 197 0030 EB2043E5 		strb	r2, [r3, #-235]
+ 171:calypso/irq.c **** }
+ 198              		.loc 1 171 0
+ 199 0034 04F09DE4 		ldr	pc, [sp], #4
+ 200              	.L19:
+ 201              		.align	2
+ 202              	.L18:
+ 203 0038 00000000 		.word	.LANCHOR1
+ 204              		.cfi_endproc
+ 205              	.LFE4:
+ 207              		.section	.text.fiq,"ax",%progbits
+ 208              		.align	2
+ 209              		.global	fiq
+ 211              	fiq:
+ 212              	.LFB5:
+ 172:calypso/irq.c **** 
+ 173:calypso/irq.c **** /* Entry point for FIQs */
+ 174:calypso/irq.c **** void fiq(void)
+ 175:calypso/irq.c **** {
+ 213              		.loc 1 175 0
+ 214              		.cfi_startproc
+ 215              		@ args = 0, pretend = 0, frame = 0
+ 216              		@ frame_needed = 0, uses_anonymous_args = 0
+ 217 0000 04E02DE5 		str	lr, [sp, #-4]!
+ 218              	.LCFI1:
+ 219              		.cfi_def_cfa_offset 4
+ 176:calypso/irq.c **** 	uint8_t num, tmp;
+ 177:calypso/irq.c **** 	irq_handler *handler;
+ 178:calypso/irq.c **** 
+ 179:calypso/irq.c **** 	num = readb(IRQ_REG(FIQ_NUM)) & 0x1f;
+ 220              		.loc 1 179 0
+ 221 0004 053CE0E3 		mvn	r3, #1280
+ 222 0008 ED0053E5 		ldrb	r0, [r3, #-237]	@ zero_extendqisi2
+ 180:calypso/irq.c **** 	if (num) {
+ 181:calypso/irq.c **** 		printd("f%02x\n", num);
+ 182:calypso/irq.c **** 	}
+ 183:calypso/irq.c **** 
+ 184:calypso/irq.c **** 	handler = irq_handlers[num];
+ 223              		.loc 1 184 0
+ 224 000c 24309FE5 		ldr	r3, .L22
+ 179:calypso/irq.c **** 	num = readb(IRQ_REG(FIQ_NUM)) & 0x1f;
+ 225              		.loc 1 179 0
+ 226 0010 1F0000E2 		and	r0, r0, #31
+ 227              	.LVL23:
+ 228              		.loc 1 184 0
+ 229 0014 003193E7 		ldr	r3, [r3, r0, asl #2]
+ 230              	.LVL24:
+ 185:calypso/irq.c **** 
+ 186:calypso/irq.c **** 	if (handler)
+ 231              		.loc 1 186 0
+ 232 0018 000053E3 		cmp	r3, #0
+ 233              		.cfi_offset 14, -4
+ 187:calypso/irq.c **** 		handler(num);
+ 234              		.loc 1 187 0
+ 235 001c 0FE0A011 		movne	lr, pc
+ 236 0020 13FF2F11 		bxne	r3
+ 237              	.LVL25:
+ 238              	.L21:
+ 188:calypso/irq.c **** 
+ 189:calypso/irq.c **** 	/* Start new FIQ agreement */
+ 190:calypso/irq.c **** 	tmp = readb(IRQ_REG(IRQ_CTRL));
+ 239              		.loc 1 190 0
+ 240 0024 053CE0E3 		mvn	r3, #1280
+ 241 0028 EB2053E5 		ldrb	r2, [r3, #-235]	@ zero_extendqisi2
+ 242              	.LVL26:
+ 191:calypso/irq.c **** 	tmp |= 0x02;
+ 243              		.loc 1 191 0
+ 244 002c 022082E3 		orr	r2, r2, #2
+ 245              	.LVL27:
+ 192:calypso/irq.c **** 	writeb(tmp, IRQ_REG(IRQ_CTRL));
+ 246              		.loc 1 192 0
+ 247 0030 EB2043E5 		strb	r2, [r3, #-235]
+ 193:calypso/irq.c **** }
+ 248              		.loc 1 193 0
+ 249 0034 04F09DE4 		ldr	pc, [sp], #4
+ 250              	.L23:
+ 251              		.align	2
+ 252              	.L22:
+ 253 0038 00000000 		.word	.LANCHOR1
+ 254              		.cfi_endproc
+ 255              	.LFE5:
+ 257              		.section	.text.irq_register_handler,"ax",%progbits
+ 258              		.align	2
+ 259              		.global	irq_register_handler
+ 261              	irq_register_handler:
+ 262              	.LFB6:
+ 194:calypso/irq.c **** 
+ 195:calypso/irq.c **** void irq_register_handler(enum irq_nr nr, irq_handler *handler)
+ 196:calypso/irq.c **** {
+ 263              		.loc 1 196 0
+ 264              		.cfi_startproc
+ 265              		@ args = 0, pretend = 0, frame = 0
+ 266              		@ frame_needed = 0, uses_anonymous_args = 0
+ 267              		@ link register save eliminated.
+ 268              	.LVL28:
+ 197:calypso/irq.c **** 	if (nr >= NR_IRQS)
+ 269              		.loc 1 197 0
+ 270 0000 1F0050E3 		cmp	r0, #31
+ 198:calypso/irq.c **** 		return;
+ 199:calypso/irq.c **** 
+ 200:calypso/irq.c **** 	irq_handlers[nr] = handler;
+ 271              		.loc 1 200 0
+ 272 0004 04309F95 		ldrls	r3, .L26
+ 273 0008 00118397 		strls	r1, [r3, r0, asl #2]
+ 274 000c 1EFF2FE1 		bx	lr
+ 275              	.L27:
+ 276              		.align	2
+ 277              	.L26:
+ 278 0010 00000000 		.word	.LANCHOR1
+ 279              		.cfi_endproc
+ 280              	.LFE6:
+ 282              		.section	.text.calypso_exceptions_install,"ax",%progbits
+ 283              		.align	2
+ 284              		.global	calypso_exceptions_install
+ 286              	calypso_exceptions_install:
+ 287              	.LFB7:
+ 201:calypso/irq.c **** }
+ 202:calypso/irq.c **** 
+ 203:calypso/irq.c **** #define BASE_ADDR_IBOOT_EXC	0x0080001C
+ 204:calypso/irq.c **** extern uint32_t _exceptions;
+ 205:calypso/irq.c **** 
+ 206:calypso/irq.c **** /* Install the exception handlers to where the ROM loader jumps */
+ 207:calypso/irq.c **** void calypso_exceptions_install(void)
+ 208:calypso/irq.c **** {
+ 288              		.loc 1 208 0
+ 289              		.cfi_startproc
+ 290              		@ args = 0, pretend = 0, frame = 0
+ 291              		@ frame_needed = 0, uses_anonymous_args = 0
+ 292              		@ link register save eliminated.
+ 293              	.LVL29:
+ 209:calypso/irq.c **** 	uint32_t *exceptions_dst = (uint32_t *) BASE_ADDR_IBOOT_EXC;
+ 294              		.loc 1 209 0
+ 295 0000 20309FE5 		ldr	r3, .L31
+ 207:calypso/irq.c **** void calypso_exceptions_install(void)
+ 296              		.loc 1 207 0
+ 297 0004 20109FE5 		ldr	r1, .L31+4
+ 210:calypso/irq.c **** 	uint32_t *exceptions_src = &_exceptions;
+ 211:calypso/irq.c **** 	int i;
+ 212:calypso/irq.c **** 
+ 213:calypso/irq.c **** 	for (i = 0; i < 7; i++)
+ 298              		.loc 1 213 0
+ 299 0008 20209FE5 		ldr	r2, .L31+8
+ 300              	.LVL30:
+ 301              	.L29:
+ 207:calypso/irq.c **** void calypso_exceptions_install(void)
+ 302              		.loc 1 207 0 discriminator 2
+ 303 000c 010083E0 		add	r0, r3, r1
+ 304 0010 020540E2 		sub	r0, r0, #8388608
+ 214:calypso/irq.c **** 		*exceptions_dst++ = *exceptions_src++;
+ 305              		.loc 1 214 0 discriminator 2
+ 306 0014 1C0010E5 		ldr	r0, [r0, #-28]
+ 307 0018 040083E4 		str	r0, [r3], #4
+ 308              	.LVL31:
+ 213:calypso/irq.c **** 	for (i = 0; i < 7; i++)
+ 309              		.loc 1 213 0 discriminator 2
+ 310 001c 020053E1 		cmp	r3, r2
+ 311 0020 F9FFFF1A 		bne	.L29
+ 215:calypso/irq.c **** 
+ 216:calypso/irq.c **** }
+ 312              		.loc 1 216 0
+ 313 0024 1EFF2FE1 		bx	lr
+ 314              	.L32:
+ 315              		.align	2
+ 316              	.L31:
+ 317 0028 1C008000 		.word	8388636
+ 318 002c 00000000 		.word	_exceptions
+ 319 0030 38008000 		.word	8388664
+ 320              		.cfi_endproc
+ 321              	.LFE7:
+ 323              		.section	.text.irq_init,"ax",%progbits
+ 324              		.align	2
+ 325              		.global	irq_init
+ 327              	irq_init:
+ 328              	.LFB10:
+ 217:calypso/irq.c **** 
+ 218:calypso/irq.c **** static void set_default_priorities(void)
+ 219:calypso/irq.c **** {
+ 220:calypso/irq.c **** 	unsigned int i;
+ 221:calypso/irq.c **** 
+ 222:calypso/irq.c **** 	for (i = 0; i < ARRAY_SIZE(default_irq_prio); i++) {
+ 223:calypso/irq.c **** 		uint16_t val;
+ 224:calypso/irq.c **** 		uint8_t prio = default_irq_prio[i];
+ 225:calypso/irq.c **** 		if (prio > 31)
+ 226:calypso/irq.c **** 			prio = 31;
+ 227:calypso/irq.c **** 
+ 228:calypso/irq.c **** 		val = readw(IRQ_REG(ILR_IRQ(i)));
+ 229:calypso/irq.c **** 		val &= ~(0x1f << 2);
+ 230:calypso/irq.c **** 		val |= prio << 2;
+ 231:calypso/irq.c **** 		writew(val, IRQ_REG(ILR_IRQ(i)));
+ 232:calypso/irq.c **** 	}
+ 233:calypso/irq.c **** }
+ 234:calypso/irq.c **** 
+ 235:calypso/irq.c **** static uint32_t irq_nest_mask;
+ 236:calypso/irq.c **** /* mask off all interrupts that have a lower priority than irq_nr */
+ 237:calypso/irq.c **** static void mask_all_lower_prio_irqs(enum irq_nr irqnr)
+ 238:calypso/irq.c **** {
+ 239:calypso/irq.c **** 	uint8_t our_prio = readb(IRQ_REG(ILR_IRQ(irqnr))) >> 2;
+ 240:calypso/irq.c **** 	int i;
+ 241:calypso/irq.c **** 
+ 242:calypso/irq.c **** 	for (i = 0; i < _NR_IRQ; i++) {
+ 243:calypso/irq.c **** 		uint8_t prio;
+ 244:calypso/irq.c **** 
+ 245:calypso/irq.c **** 		if (i == irqnr)
+ 246:calypso/irq.c **** 			continue;
+ 247:calypso/irq.c **** 
+ 248:calypso/irq.c **** 		prio = readb(IRQ_REG(ILR_IRQ(i))) >> 2;
+ 249:calypso/irq.c **** 		if (prio >= our_prio)
+ 250:calypso/irq.c **** 			irq_nest_mask |= (1 << i);
+ 251:calypso/irq.c **** 	}
+ 252:calypso/irq.c **** }
+ 253:calypso/irq.c **** 
+ 254:calypso/irq.c **** void irq_init(void)
+ 255:calypso/irq.c **** {
+ 329              		.loc 1 255 0
+ 330              		.cfi_startproc
+ 331              		@ args = 0, pretend = 0, frame = 0
+ 332              		@ frame_needed = 0, uses_anonymous_args = 0
+ 333              		@ link register save eliminated.
+ 334              	.LVL32:
+ 335              		.loc 1 255 0
+ 336 0000 48209FE5 		ldr	r2, .L36
+ 337 0004 48309FE5 		ldr	r3, .L36+4
+ 338              	.LBB5:
+ 339              	.LBB6:
+ 222:calypso/irq.c **** 	for (i = 0; i < ARRAY_SIZE(default_irq_prio); i++) {
+ 340              		.loc 1 222 0
+ 341 0008 48109FE5 		ldr	r1, .L36+8
+ 342              	.LVL33:
+ 343              	.L34:
+ 344              	.LBB7:
+ 228:calypso/irq.c **** 		val = readw(IRQ_REG(ILR_IRQ(i)));
+ 345              		.loc 1 228 0
+ 346 000c B0C0D3E1 		ldrh	ip, [r3, #0]
+ 224:calypso/irq.c **** 		uint8_t prio = default_irq_prio[i];
+ 347              		.loc 1 224 0
+ 348 0010 0100F2E5 		ldrb	r0, [r2, #1]!	@ zero_extendqisi2
+ 349              	.LVL34:
+ 229:calypso/irq.c **** 		val &= ~(0x1f << 2);
+ 350              		.loc 1 229 0
+ 351 0014 7CC0CCE3 		bic	ip, ip, #124
+ 352              	.LVL35:
+ 230:calypso/irq.c **** 		val |= prio << 2;
+ 353              		.loc 1 230 0
+ 354 0018 1F0050E3 		cmp	r0, #31
+ 355 001c 1F00A023 		movcs	r0, #31
+ 356              	.LVL36:
+ 357 0020 00018CE1 		orr	r0, ip, r0, asl #2
+ 358              	.LVL37:
+ 231:calypso/irq.c **** 		writew(val, IRQ_REG(ILR_IRQ(i)));
+ 359              		.loc 1 231 0
+ 360 0024 B200C3E0 		strh	r0, [r3], #2	@ movhi
+ 361              	.LBE7:
+ 222:calypso/irq.c **** 	for (i = 0; i < ARRAY_SIZE(default_irq_prio); i++) {
+ 362              		.loc 1 222 0
+ 363 0028 010053E1 		cmp	r3, r1
+ 364 002c F6FFFF1A 		bne	.L34
+ 365              	.LBE6:
+ 366              	.LBE5:
+ 256:calypso/irq.c **** 	/* set default priorities */
+ 257:calypso/irq.c **** 	set_default_priorities();
+ 258:calypso/irq.c **** 	/* mask all interrupts off */
+ 259:calypso/irq.c **** 	writew(0xffff, IRQ_REG(MASK_IT_REG1));
+ 367              		.loc 1 259 0
+ 368 0030 053CE0E3 		mvn	r3, #1280
+ 369 0034 0020E0E3 		mvn	r2, #0	@ movhi
+ 370 0038 B72F43E1 		strh	r2, [r3, #-247]	@ movhi
+ 260:calypso/irq.c **** 	writew(0xffff, IRQ_REG(MASK_IT_REG2));
+ 371              		.loc 1 260 0
+ 372 003c B52F43E1 		strh	r2, [r3, #-245]	@ movhi
+ 261:calypso/irq.c **** 	/* clear all pending interrupts */
+ 262:calypso/irq.c **** 	writew(0, IRQ_REG(IT_REG1));
+ 373              		.loc 1 262 0
+ 374 0040 0020A0E3 		mov	r2, #0	@ movhi
+ 375 0044 BF2F43E1 		strh	r2, [r3, #-255]	@ movhi
+ 263:calypso/irq.c **** 	writew(0, IRQ_REG(IT_REG2));
+ 376              		.loc 1 263 0
+ 377 0048 BD2F43E1 		strh	r2, [r3, #-253]	@ movhi
+ 264:calypso/irq.c **** 	/* enable interrupts globally to the ARM core */
+ 265:calypso/irq.c **** 	arm_enable_interrupts();
+ 266:calypso/irq.c **** }
+ 378              		.loc 1 266 0
+ 265:calypso/irq.c **** 	arm_enable_interrupts();
+ 379              		.loc 1 265 0
+ 380 004c FEFFFFEA 		b	arm_enable_interrupts
+ 381              	.LVL38:
+ 382              	.L37:
+ 383              		.align	2
+ 384              	.L36:
+ 385 0050 FFFFFFFF 		.word	.LANCHOR0-1
+ 386 0054 20FAFFFF 		.word	-1504
+ 387 0058 4AFAFFFF 		.word	-1462
+ 388              		.cfi_endproc
+ 389              	.LFE10:
+ 391              		.section	.rodata
+ 392              		.align	2
+ 393              		.set	.LANCHOR0,. + 0
+ 396              	default_irq_prio:
+ 397 0000 FF       		.byte	-1
+ 398 0001 FF       		.byte	-1
+ 399 0002 FF       		.byte	-1
+ 400 0003 00       		.byte	0
+ 401 0004 03       		.byte	3
+ 402 0005 FF       		.byte	-1
+ 403 0006 FF       		.byte	-1
+ 404 0007 08       		.byte	8
+ 405 0008 04       		.byte	4
+ 406 0009 09       		.byte	9
+ 407 000a 0A       		.byte	10
+ 408 000b 02       		.byte	2
+ 409 000c 0C       		.byte	12
+ 410 000d FF       		.byte	-1
+ 411 000e FF       		.byte	-1
+ 412 000f FF       		.byte	-1
+ 413 0010 00       		.byte	0
+ 414 0011 07       		.byte	7
+ 415 0012 02       		.byte	2
+ 416 0013 01       		.byte	1
+ 417 0014 FF       		.byte	-1
+ 418 0015 000000   		.bss
+ 419              		.align	2
+ 420              		.set	.LANCHOR1,. + 0
+ 423              	irq_handlers:
+ 424 0000 00000000 		.space	128
+ 424      00000000 
+ 424      00000000 
+ 424      00000000 
+ 424      00000000 
+ 425              		.text
+ 426              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 irq.c
+     /tmp/ccmm9eDN.s:12     .text._irq_enable:0000000000000000 $a
+     /tmp/ccmm9eDN.s:14     .text._irq_enable:0000000000000000 _irq_enable
+     /tmp/ccmm9eDN.s:58     .text._irq_enable:0000000000000038 $d
+     /tmp/ccmm9eDN.s:64     .text.irq_enable:0000000000000000 $a
+     /tmp/ccmm9eDN.s:67     .text.irq_enable:0000000000000000 irq_enable
+     /tmp/ccmm9eDN.s:84     .text.irq_disable:0000000000000000 $a
+     /tmp/ccmm9eDN.s:87     .text.irq_disable:0000000000000000 irq_disable
+     /tmp/ccmm9eDN.s:104    .text.irq_config:0000000000000000 $a
+     /tmp/ccmm9eDN.s:107    .text.irq_config:0000000000000000 irq_config
+     /tmp/ccmm9eDN.s:153    .text.irq_config:0000000000000044 $d
+     /tmp/ccmm9eDN.s:158    .text.irq:0000000000000000 $a
+     /tmp/ccmm9eDN.s:161    .text.irq:0000000000000000 irq
+     /tmp/ccmm9eDN.s:203    .text.irq:0000000000000038 $d
+     /tmp/ccmm9eDN.s:208    .text.fiq:0000000000000000 $a
+     /tmp/ccmm9eDN.s:211    .text.fiq:0000000000000000 fiq
+     /tmp/ccmm9eDN.s:253    .text.fiq:0000000000000038 $d
+     /tmp/ccmm9eDN.s:258    .text.irq_register_handler:0000000000000000 $a
+     /tmp/ccmm9eDN.s:261    .text.irq_register_handler:0000000000000000 irq_register_handler
+     /tmp/ccmm9eDN.s:278    .text.irq_register_handler:0000000000000010 $d
+     /tmp/ccmm9eDN.s:283    .text.calypso_exceptions_install:0000000000000000 $a
+     /tmp/ccmm9eDN.s:286    .text.calypso_exceptions_install:0000000000000000 calypso_exceptions_install
+     /tmp/ccmm9eDN.s:317    .text.calypso_exceptions_install:0000000000000028 $d
+     /tmp/ccmm9eDN.s:324    .text.irq_init:0000000000000000 $a
+     /tmp/ccmm9eDN.s:327    .text.irq_init:0000000000000000 irq_init
+     /tmp/ccmm9eDN.s:385    .text.irq_init:0000000000000050 $d
+     /tmp/ccmm9eDN.s:392    .rodata:0000000000000000 $d
+     /tmp/ccmm9eDN.s:396    .rodata:0000000000000000 default_irq_prio
+     /tmp/ccmm9eDN.s:419    .bss:0000000000000000 $d
+     /tmp/ccmm9eDN.s:423    .bss:0000000000000000 irq_handlers
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+_exceptions
+arm_enable_interrupts

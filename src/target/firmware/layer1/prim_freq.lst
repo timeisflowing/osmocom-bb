@@ -1,0 +1,339 @@
+   1              		.file	"prim_freq.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.l1s_freq_cmd,"ax",%progbits
+  12              		.align	2
+  14              	l1s_freq_cmd:
+  15              	.LFB65:
+  16              		.file 1 "layer1/prim_freq.c"
+   1:layer1/prim_freq.c **** /* Layer 1 Frequency redefinition at "starting time" */
+   2:layer1/prim_freq.c **** 
+   3:layer1/prim_freq.c **** /* (C) 2010 by Andreas Eversverg <jolly@eversberg.eu>
+   4:layer1/prim_freq.c ****  *
+   5:layer1/prim_freq.c ****  * All Rights Reserved
+   6:layer1/prim_freq.c ****  *
+   7:layer1/prim_freq.c ****  * This program is free software; you can redistribute it and/or modify
+   8:layer1/prim_freq.c ****  * it under the terms of the GNU General Public License as published by
+   9:layer1/prim_freq.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:layer1/prim_freq.c ****  * (at your option) any later version.
+  11:layer1/prim_freq.c ****  *
+  12:layer1/prim_freq.c ****  * This program is distributed in the hope that it will be useful,
+  13:layer1/prim_freq.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:layer1/prim_freq.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:layer1/prim_freq.c ****  * GNU General Public License for more details.
+  16:layer1/prim_freq.c ****  *
+  17:layer1/prim_freq.c ****  * You should have received a copy of the GNU General Public License along
+  18:layer1/prim_freq.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:layer1/prim_freq.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:layer1/prim_freq.c ****  *
+  21:layer1/prim_freq.c ****  */
+  22:layer1/prim_freq.c **** 
+  23:layer1/prim_freq.c **** #include <stdint.h>
+  24:layer1/prim_freq.c **** #include <stdio.h>
+  25:layer1/prim_freq.c **** #include <string.h>
+  26:layer1/prim_freq.c **** #include <stdlib.h>
+  27:layer1/prim_freq.c **** #include <inttypes.h>
+  28:layer1/prim_freq.c **** #include <defines.h>
+  29:layer1/prim_freq.c **** #include <debug.h>
+  30:layer1/prim_freq.c **** #include <memory.h>
+  31:layer1/prim_freq.c **** #include <byteorder.h>
+  32:layer1/prim_freq.c **** #include <osmocom/gsm/gsm_utils.h>
+  33:layer1/prim_freq.c **** #include <osmocom/core/msgb.h>
+  34:layer1/prim_freq.c **** #include <calypso/dsp_api.h>
+  35:layer1/prim_freq.c **** #include <calypso/irq.h>
+  36:layer1/prim_freq.c **** #include <calypso/tpu.h>
+  37:layer1/prim_freq.c **** #include <calypso/tsp.h>
+  38:layer1/prim_freq.c **** #include <calypso/dsp.h>
+  39:layer1/prim_freq.c **** #include <calypso/timer.h>
+  40:layer1/prim_freq.c **** #include <comm/sercomm.h>
+  41:layer1/prim_freq.c **** #include <asm/system.h>
+  42:layer1/prim_freq.c **** 
+  43:layer1/prim_freq.c **** #include <layer1/sync.h>
+  44:layer1/prim_freq.c **** #include <layer1/async.h>
+  45:layer1/prim_freq.c **** #include <layer1/tdma_sched.h>
+  46:layer1/prim_freq.c **** #include <layer1/tpu_window.h>
+  47:layer1/prim_freq.c **** #include <layer1/l23_api.h>
+  48:layer1/prim_freq.c **** #include <layer1/sched_gsmtime.h>
+  49:layer1/prim_freq.c **** 
+  50:layer1/prim_freq.c **** #include <l1ctl_proto.h>
+  51:layer1/prim_freq.c **** 
+  52:layer1/prim_freq.c **** struct {
+  53:layer1/prim_freq.c **** 	uint32_t fn;
+  54:layer1/prim_freq.c **** 	uint16_t band_arfcn;
+  55:layer1/prim_freq.c **** } last_rach;
+  56:layer1/prim_freq.c **** 
+  57:layer1/prim_freq.c **** /* if the "starting time" is reached, use frequencies "after time" */
+  58:layer1/prim_freq.c **** static int l1s_freq_cmd(__unused uint8_t p1, __unused uint8_t p2, __unused uint16_t p3)
+  59:layer1/prim_freq.c **** {
+  17              		.loc 1 59 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  22 0000 04E02DE5 		str	lr, [sp, #-4]!
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 4
+  60:layer1/prim_freq.c **** 	putchart('F');
+  61:layer1/prim_freq.c **** 
+  62:layer1/prim_freq.c **** 	printf("Reached starting time, altering frequency set\n");
+  25              		.loc 1 62 0
+  26 0004 38009FE5 		ldr	r0, .L4
+  27              	.LVL1:
+  28              		.cfi_offset 14, -4
+  29 0008 FEFFFFEB 		bl	puts
+  30              	.LVL2:
+  63:layer1/prim_freq.c **** 
+  64:layer1/prim_freq.c **** 	l1s.dedicated.tsc = l1s.dedicated.st_tsc;
+  31              		.loc 1 64 0
+  32 000c 34009FE5 		ldr	r0, .L4+4
+  33 0010 943BD0E5 		ldrb	r3, [r0, #2964]	@ zero_extendqisi2
+  34 0014 0D3BC0E5 		strb	r3, [r0, #2829]
+  65:layer1/prim_freq.c **** 	l1s.dedicated.h = l1s.dedicated.st_h;
+  35              		.loc 1 65 0
+  36 0018 963BD0E5 		ldrb	r3, [r0, #2966]	@ zero_extendqisi2
+  66:layer1/prim_freq.c **** 	if (l1s.dedicated.h)
+  37              		.loc 1 66 0
+  38 001c 000053E3 		cmp	r3, #0
+  65:layer1/prim_freq.c **** 	l1s.dedicated.h = l1s.dedicated.st_h;
+  39              		.loc 1 65 0
+  40 0020 0F3BC0E5 		strb	r3, [r0, #2831]
+  67:layer1/prim_freq.c **** 		memcpy(&l1s.dedicated.h1, &l1s.dedicated.st_h1,
+  68:layer1/prim_freq.c **** 			sizeof(l1s.dedicated.h1));
+  69:layer1/prim_freq.c **** 	else
+  70:layer1/prim_freq.c **** 		memcpy(&l1s.dedicated.h0, &l1s.dedicated.st_h0,
+  41              		.loc 1 70 0
+  42 0024 983B9005 		ldreq	r3, [r0, #2968]
+  43 0028 103B8005 		streq	r3, [r0, #2832]
+  66:layer1/prim_freq.c **** 	if (l1s.dedicated.h)
+  44              		.loc 1 66 0
+  67:layer1/prim_freq.c **** 		memcpy(&l1s.dedicated.h1, &l1s.dedicated.st_h1,
+  45              		.loc 1 67 0
+  46 002c B10E8012 		addne	r0, r0, #2832
+  47 0030 14109F15 		ldrne	r1, .L4+8
+  48 0034 8420A013 		movne	r2, #132
+  49 0038 FEFFFF1B 		blne	memcpy
+  50              	.L3:
+  71:layer1/prim_freq.c **** 			sizeof(l1s.dedicated.h0));
+  72:layer1/prim_freq.c **** 
+  73:layer1/prim_freq.c **** 	return 0;
+  74:layer1/prim_freq.c **** }
+  51              		.loc 1 74 0
+  52 003c 0000A0E3 		mov	r0, #0
+  53 0040 04F09DE4 		ldr	pc, [sp], #4
+  54              	.L5:
+  55              		.align	2
+  56              	.L4:
+  57 0044 00000000 		.word	.LC0
+  58 0048 00000000 		.word	l1s
+  59 004c 980B0000 		.word	l1s+2968
+  60              		.cfi_endproc
+  61              	.LFE65:
+  63              		.global	__umodsi3
+  64              		.section	.text.l1a_freq_req,"ax",%progbits
+  65              		.align	2
+  66              		.global	l1a_freq_req
+  68              	l1a_freq_req:
+  69              	.LFB66:
+  75:layer1/prim_freq.c **** 
+  76:layer1/prim_freq.c **** /* sched set for frequency change */
+  77:layer1/prim_freq.c **** const struct tdma_sched_item freq_sched_set[] = {
+  78:layer1/prim_freq.c **** 	SCHED_ITEM(l1s_freq_cmd, -3, 1, 0),
+  79:layer1/prim_freq.c **** 	SCHED_END_SET()
+  80:layer1/prim_freq.c **** };
+  81:layer1/prim_freq.c **** 
+  82:layer1/prim_freq.c **** /* request a frequency change at the given frame number
+  83:layer1/prim_freq.c ****  * Note: The fn_sched parameter must be in range 0..42431. */
+  84:layer1/prim_freq.c **** void l1a_freq_req(uint32_t fn_sched)
+  85:layer1/prim_freq.c **** {
+  70              		.loc 1 85 0
+  71              		.cfi_startproc
+  72              		@ args = 0, pretend = 0, frame = 0
+  73              		@ frame_needed = 0, uses_anonymous_args = 0
+  74              	.LVL3:
+  86:layer1/prim_freq.c **** 	int32_t diff;
+  87:layer1/prim_freq.c **** 	unsigned long flags;
+  88:layer1/prim_freq.c **** 
+  89:layer1/prim_freq.c **** 	/* We must check here, if the time already elapsed.
+  90:layer1/prim_freq.c **** 	 * This is required, because we may have an undefined delay between
+  91:layer1/prim_freq.c **** 	 * layer 1 and layer 3.
+  92:layer1/prim_freq.c **** 	 */
+  93:layer1/prim_freq.c **** 	diff = fn_sched - (l1s.current_time.fn % 42432);
+  75              		.loc 1 93 0
+  76 0000 A0309FE5 		ldr	r3, .L10
+  85:layer1/prim_freq.c **** {
+  77              		.loc 1 85 0
+  78 0004 30402DE9 		stmfd	sp!, {r4, r5, lr}
+  79              	.LCFI1:
+  80              		.cfi_def_cfa_offset 12
+  81              		.loc 1 93 0
+  82 0008 005093E5 		ldr	r5, [r3, #0]
+  83              		.cfi_offset 14, -4
+  84              		.cfi_offset 5, -8
+  85              		.cfi_offset 4, -12
+  85:layer1/prim_freq.c **** {
+  86              		.loc 1 85 0
+  87 000c 0040A0E1 		mov	r4, r0
+  88              		.loc 1 93 0
+  89 0010 94109FE5 		ldr	r1, .L10+4
+  90 0014 0500A0E1 		mov	r0, r5
+  91              	.LVL4:
+  92 0018 FEFFFFEB 		bl	__umodsi3
+  93              	.LVL5:
+  94:layer1/prim_freq.c **** 	if (diff < 0)
+  94              		.loc 1 94 0
+  95 001c 004054E0 		subs	r4, r4, r0
+  96              	.LVL6:
+  95:layer1/prim_freq.c **** 		diff += 42432;
+  97              		.loc 1 95 0
+  98 0020 A54C8442 		addmi	r4, r4, #42240
+  99              	.LVL7:
+ 100 0024 C0408442 		addmi	r4, r4, #192
+ 101              	.LVL8:
+  96:layer1/prim_freq.c **** 	/* note: 5 is used to give scheduler some time */
+  97:layer1/prim_freq.c **** 	if (diff == 5 || diff >= 32024) {
+ 102              		.loc 1 97 0
+ 103 0028 80209FE5 		ldr	r2, .L10+8
+ 104 002c 050054E3 		cmp	r4, #5
+ 105 0030 0030A013 		movne	r3, #0
+ 106 0034 0130A003 		moveq	r3, #1
+ 107 0038 020054E1 		cmp	r4, r2
+ 108 003c 013083C3 		orrgt	r3, r3, #1
+ 109 0040 000053E3 		cmp	r3, #0
+ 110 0044 0400000A 		beq	.L8
+  98:layer1/prim_freq.c **** 		l1s_freq_cmd(0, 0, 0);
+ 111              		.loc 1 98 0
+ 112 0048 0000A0E3 		mov	r0, #0
+ 113 004c 0010A0E1 		mov	r1, r0
+ 114 0050 0020A0E1 		mov	r2, r0
+  99:layer1/prim_freq.c **** 		return;
+ 100:layer1/prim_freq.c **** 	}
+ 101:layer1/prim_freq.c **** 
+ 102:layer1/prim_freq.c **** 	/* calculate (full range) frame number */
+ 103:layer1/prim_freq.c **** 	fn_sched = l1s.current_time.fn + diff;
+ 104:layer1/prim_freq.c **** 	if (fn_sched >= GSM_MAX_FN)
+ 105:layer1/prim_freq.c **** 		fn_sched -= GSM_MAX_FN;
+ 106:layer1/prim_freq.c **** 	printf("Scheduling frequency change at fn=%"PRIu32", currently fn=%"PRIu32"\n",
+ 107:layer1/prim_freq.c **** 		fn_sched, l1s.current_time.fn);
+ 108:layer1/prim_freq.c **** 
+ 109:layer1/prim_freq.c **** 	local_firq_save(flags);
+ 110:layer1/prim_freq.c **** 	sched_gsmtime(freq_sched_set, fn_sched, 0);
+ 111:layer1/prim_freq.c **** 	local_irq_restore(flags);
+ 112:layer1/prim_freq.c **** }
+ 115              		.loc 1 112 0
+ 116 0054 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+  98:layer1/prim_freq.c **** 		l1s_freq_cmd(0, 0, 0);
+ 117              		.loc 1 98 0
+ 118 0058 FEFFFFEA 		b	l1s_freq_cmd
+ 119              	.L8:
+ 104:layer1/prim_freq.c **** 	if (fn_sched >= GSM_MAX_FN)
+ 120              		.loc 1 104 0
+ 121 005c 50309FE5 		ldr	r3, .L10+12
+ 103:layer1/prim_freq.c **** 	fn_sched = l1s.current_time.fn + diff;
+ 122              		.loc 1 103 0
+ 123 0060 054084E0 		add	r4, r4, r5
+ 124              	.LVL9:
+ 104:layer1/prim_freq.c **** 	if (fn_sched >= GSM_MAX_FN)
+ 125              		.loc 1 104 0
+ 126 0064 030054E1 		cmp	r4, r3
+ 105:layer1/prim_freq.c **** 		fn_sched -= GSM_MAX_FN;
+ 127              		.loc 1 105 0
+ 128 0068 FF448482 		addhi	r4, r4, #-16777216
+ 129              	.LVL10:
+ 130 006c D6488482 		addhi	r4, r4, #14024704
+ 131 0070 094A8482 		addhi	r4, r4, #36864
+ 132              	.LVL11:
+ 106:layer1/prim_freq.c **** 	printf("Scheduling frequency change at fn=%"PRIu32", currently fn=%"PRIu32"\n",
+ 133              		.loc 1 106 0
+ 134 0074 0410A0E1 		mov	r1, r4
+ 135 0078 0520A0E1 		mov	r2, r5
+ 136 007c 34009FE5 		ldr	r0, .L10+16
+ 137 0080 FEFFFFEB 		bl	printf
+ 138              	.LBB2:
+ 109:layer1/prim_freq.c **** 	local_firq_save(flags);
+ 139              		.loc 1 109 0
+ 140              	@ 109 "layer1/prim_freq.c" 1
+ 141 0084 00500FE1 		mrs	r5, cpsr		@ local_firq_save
+ 142 0088 C03085E3 		orr	r3, r5, #0xC0
+ 143 008c 03F021E1 		msr	cpsr_c, r3
+ 144              	@ 0 "" 2
+ 145              	.LBE2:
+ 110:layer1/prim_freq.c **** 	sched_gsmtime(freq_sched_set, fn_sched, 0);
+ 146              		.loc 1 110 0
+ 147 0090 0020A0E3 		mov	r2, #0
+ 148 0094 0410A0E1 		mov	r1, r4
+ 149 0098 1C009FE5 		ldr	r0, .L10+20
+ 150 009c FEFFFFEB 		bl	sched_gsmtime
+ 111:layer1/prim_freq.c **** 	local_irq_restore(flags);
+ 151              		.loc 1 111 0
+ 152              	@ 111 "layer1/prim_freq.c" 1
+ 153 00a0 05F021E1 		msr	cpsr_c, r5		@ local_irq_restore
+ 154              	
+ 155              	@ 0 "" 2
+ 156              		.loc 1 112 0
+ 157 00a4 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 158              	.L11:
+ 159              		.align	2
+ 160              	.L10:
+ 161 00a8 00000000 		.word	l1s
+ 162 00ac C0A50000 		.word	42432
+ 163 00b0 177D0000 		.word	32023
+ 164 00b4 FF6F2900 		.word	2715647
+ 165 00b8 2E000000 		.word	.LC1
+ 166 00bc 00000000 		.word	.LANCHOR0
+ 167              		.cfi_endproc
+ 168              	.LFE66:
+ 170              		.global	freq_sched_set
+ 171              		.comm	last_rach,8,4
+ 172              		.section	.rodata
+ 173              		.align	2
+ 174              		.set	.LANCHOR0,. + 0
+ 177              	freq_sched_set:
+ 178 0000 00000000 		.word	l1s_freq_cmd
+ 179 0004 01       		.byte	1
+ 180 0005 00       		.byte	0
+ 181 0006 0000     		.space	2
+ 182 0008 FDFF     		.short	-3
+ 183 000a 0000     		.short	0
+ 184 000c 00000000 		.word	tdma_end_set
+ 185 0010 00       		.byte	0
+ 186 0011 00       		.byte	0
+ 187 0012 00000000 		.space	6
+ 187      0000
+ 188              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 189              	.LC0:
+ 190 0000 52656163 		.ascii	"Reached starting time, altering frequency set\000"
+ 190      68656420 
+ 190      73746172 
+ 190      74696E67 
+ 190      2074696D 
+ 191              	.LC1:
+ 192 002e 53636865 		.ascii	"Scheduling frequency change at fn=%lu, currently fn"
+ 192      64756C69 
+ 192      6E672066 
+ 192      72657175 
+ 192      656E6379 
+ 193 0061 3D256C75 		.ascii	"=%lu\012\000"
+ 193      0A00
+ 194              		.text
+ 195              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 prim_freq.c
+     /tmp/ccyYGmLl.s:12     .text.l1s_freq_cmd:0000000000000000 $a
+     /tmp/ccyYGmLl.s:14     .text.l1s_freq_cmd:0000000000000000 l1s_freq_cmd
+     /tmp/ccyYGmLl.s:57     .text.l1s_freq_cmd:0000000000000044 $d
+     /tmp/ccyYGmLl.s:65     .text.l1a_freq_req:0000000000000000 $a
+     /tmp/ccyYGmLl.s:68     .text.l1a_freq_req:0000000000000000 l1a_freq_req
+     /tmp/ccyYGmLl.s:161    .text.l1a_freq_req:00000000000000a8 $d
+     /tmp/ccyYGmLl.s:177    .rodata:0000000000000000 freq_sched_set
+                            *COM*:0000000000000008 last_rach
+     /tmp/ccyYGmLl.s:173    .rodata:0000000000000000 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+puts
+memcpy
+l1s
+__umodsi3
+printf
+sched_gsmtime
+tdma_end_set

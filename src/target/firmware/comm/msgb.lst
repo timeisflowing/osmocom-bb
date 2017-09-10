@@ -1,0 +1,237 @@
+   1              		.file	"msgb.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text._talloc_zero,"ax",%progbits
+  12              		.align	2
+  13              		.global	_talloc_zero
+  15              	_talloc_zero:
+  16              	.LFB36:
+  17              		.file 1 "comm/msgb.c"
+   1:comm/msgb.c   **** /* (C) 2008-2010 by Harald Welte <laforge@gnumonks.org>
+   2:comm/msgb.c   ****  * All Rights Reserved
+   3:comm/msgb.c   ****  *
+   4:comm/msgb.c   ****  * This program is free software; you can redistribute it and/or modify
+   5:comm/msgb.c   ****  * it under the terms of the GNU General Public License as published by
+   6:comm/msgb.c   ****  * the Free Software Foundation; either version 2 of the License, or
+   7:comm/msgb.c   ****  * (at your option) any later version.
+   8:comm/msgb.c   ****  *
+   9:comm/msgb.c   ****  * This program is distributed in the hope that it will be useful,
+  10:comm/msgb.c   ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  11:comm/msgb.c   ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  12:comm/msgb.c   ****  * GNU General Public License for more details.
+  13:comm/msgb.c   ****  *
+  14:comm/msgb.c   ****  * You should have received a copy of the GNU General Public License along
+  15:comm/msgb.c   ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  16:comm/msgb.c   ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  17:comm/msgb.c   ****  *
+  18:comm/msgb.c   ****  */
+  19:comm/msgb.c   **** 
+  20:comm/msgb.c   **** 
+  21:comm/msgb.c   **** #include <stdint.h>
+  22:comm/msgb.c   **** #include <stdio.h>
+  23:comm/msgb.c   **** #include <string.h>
+  24:comm/msgb.c   **** #include <sys/types.h>
+  25:comm/msgb.c   **** #include <asm/system.h>
+  26:comm/msgb.c   **** 
+  27:comm/msgb.c   **** #include <debug.h>
+  28:comm/msgb.c   **** #include <delay.h>
+  29:comm/msgb.c   **** #include <console.h>
+  30:comm/msgb.c   **** 
+  31:comm/msgb.c   **** #include <osmocom/core/msgb.h>
+  32:comm/msgb.c   **** 
+  33:comm/msgb.c   **** #define NO_TALLOC
+  34:comm/msgb.c   **** 
+  35:comm/msgb.c   **** void *tall_msgb_ctx;
+  36:comm/msgb.c   **** 
+  37:comm/msgb.c   **** #ifdef NO_TALLOC
+  38:comm/msgb.c   **** /* This is a poor mans static allocator for msgb objects */
+  39:comm/msgb.c   **** #define MSGB_DATA_SIZE	256+4
+  40:comm/msgb.c   **** #define MSGB_NUM	32
+  41:comm/msgb.c   **** struct supermsg {
+  42:comm/msgb.c   **** 	uint8_t allocated;
+  43:comm/msgb.c   **** 	struct msgb msg;
+  44:comm/msgb.c   **** 	uint8_t buf[MSGB_DATA_SIZE];
+  45:comm/msgb.c   **** };
+  46:comm/msgb.c   **** static struct supermsg msgs[MSGB_NUM];
+  47:comm/msgb.c   **** void *_talloc_zero(void *ctx, unsigned int size, const char *name)
+  48:comm/msgb.c   **** {
+  18              		.loc 1 48 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              	.LVL0:
+  23 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+  24              	.LCFI0:
+  25              		.cfi_def_cfa_offset 24
+  26              	.LBB2:
+  49:comm/msgb.c   **** 	unsigned long flags;
+  50:comm/msgb.c   **** 	unsigned int i;
+  51:comm/msgb.c   **** 
+  52:comm/msgb.c   **** 	local_firq_save(flags);
+  27              		.loc 1 52 0
+  28              	@ 52 "comm/msgb.c" 1
+  29 0004 00800FE1 		mrs	r8, cpsr		@ local_firq_save
+  30 0008 C03088E3 		orr	r3, r8, #0xC0
+  31 000c 03F021E1 		msr	cpsr_c, r3
+  32              	@ 0 "" 2
+  33              	.LVL1:
+  34              	.LBE2:
+  53:comm/msgb.c   **** 
+  54:comm/msgb.c   **** 	if (size > sizeof(struct msgb) + MSGB_DATA_SIZE)
+  35              		.loc 1 54 0
+  36 0010 520F51E3 		cmp	r1, #328
+  37 0014 1C00008A 		bhi	.L2
+  38              		.cfi_offset 14, -4
+  39              		.cfi_offset 8, -8
+  40              		.cfi_offset 7, -12
+  41              		.cfi_offset 6, -16
+  42              		.cfi_offset 5, -20
+  43              		.cfi_offset 4, -24
+  44 0018 0020A0E3 		mov	r2, #0
+  45              	.LVL2:
+  55:comm/msgb.c   **** 		goto panic;
+  56:comm/msgb.c   **** 
+  57:comm/msgb.c   **** 	for (i = 0; i < ARRAY_SIZE(msgs); i++) {
+  58:comm/msgb.c   **** 		if (!msgs[i].allocated) {
+  46              		.loc 1 58 0
+  47 001c 74109FE5 		ldr	r1, .L7
+  48              	.LVL3:
+  54:comm/msgb.c   **** 	if (size > sizeof(struct msgb) + MSGB_DATA_SIZE)
+  49              		.loc 1 54 0
+  50 0020 0230A0E1 		mov	r3, r2
+  51              	.L4:
+  52              		.loc 1 58 0
+  53 0024 0240D1E7 		ldrb	r4, [r1, r2]	@ zero_extendqisi2
+  54 0028 000054E3 		cmp	r4, #0
+  55 002c 64509FE5 		ldr	r5, .L7
+  56 0030 1100001A 		bne	.L3
+  59:comm/msgb.c   **** 			msgs[i].allocated = 1;
+  57              		.loc 1 59 0
+  58 0034 536FA0E3 		mov	r6, #332
+  59 0038 930606E0 		mul	r6, r3, r6
+  60:comm/msgb.c   **** 			memset(&msgs[i].msg, 0, sizeof(msgs[i].msg));
+  60              		.loc 1 60 0
+  61 003c 047086E2 		add	r7, r6, #4
+  62 0040 077085E0 		add	r7, r5, r7
+  59:comm/msgb.c   **** 			msgs[i].allocated = 1;
+  63              		.loc 1 59 0
+  64 0044 0130A0E3 		mov	r3, #1
+  65              		.loc 1 60 0
+  66 0048 0410A0E1 		mov	r1, r4
+  67 004c 0700A0E1 		mov	r0, r7
+  68              	.LVL4:
+  69 0050 4420A0E3 		mov	r2, #68
+  59:comm/msgb.c   **** 			msgs[i].allocated = 1;
+  70              		.loc 1 59 0
+  71 0054 0630C5E7 		strb	r3, [r5, r6]
+  72              		.loc 1 60 0
+  73 0058 FEFFFFEB 		bl	memset
+  61:comm/msgb.c   **** 			memset(&msgs[i].buf, 0, sizeof(msgs[i].buf));
+  74              		.loc 1 61 0
+  75 005c 480086E2 		add	r0, r6, #72
+  76 0060 000085E0 		add	r0, r5, r0
+  77 0064 0410A0E1 		mov	r1, r4
+  78 0068 412FA0E3 		mov	r2, #260
+  79 006c FEFFFFEB 		bl	memset
+  62:comm/msgb.c   **** 			local_irq_restore(flags);
+  80              		.loc 1 62 0
+  81              	@ 62 "comm/msgb.c" 1
+  82 0070 08F021E1 		msr	cpsr_c, r8		@ local_irq_restore
+  83              	
+  84              	@ 0 "" 2
+  63:comm/msgb.c   **** 			return &msgs[i].msg;
+  64:comm/msgb.c   **** 		}
+  65:comm/msgb.c   **** 	}
+  66:comm/msgb.c   **** 
+  67:comm/msgb.c   **** panic:
+  68:comm/msgb.c   **** 	cons_puts("unable to allocate msgb\n");
+  69:comm/msgb.c   **** 	while (1);
+  70:comm/msgb.c   **** 
+  71:comm/msgb.c   **** 	return NULL; /* not reached */
+  72:comm/msgb.c   **** }
+  85              		.loc 1 72 0
+  86 0074 0700A0E1 		mov	r0, r7
+  87 0078 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+  88              	.LVL5:
+  89              	.L3:
+  57:comm/msgb.c   **** 	for (i = 0; i < ARRAY_SIZE(msgs); i++) {
+  90              		.loc 1 57 0
+  91 007c 013083E2 		add	r3, r3, #1
+  92              	.LVL6:
+  93 0080 200053E3 		cmp	r3, #32
+  94 0084 532F82E2 		add	r2, r2, #332
+  95 0088 E5FFFF1A 		bne	.L4
+  96              	.LVL7:
+  97              	.L2:
+  68:comm/msgb.c   **** 	cons_puts("unable to allocate msgb\n");
+  98              		.loc 1 68 0
+  99 008c 08009FE5 		ldr	r0, .L7+4
+ 100              	.LVL8:
+ 101 0090 FEFFFFEB 		bl	cons_puts
+ 102              	.L5:
+ 103 0094 FEFFFFEA 		b	.L5
+ 104              	.L8:
+ 105              		.align	2
+ 106              	.L7:
+ 107 0098 00000000 		.word	.LANCHOR0
+ 108 009c 00000000 		.word	.LC0
+ 109              		.cfi_endproc
+ 110              	.LFE36:
+ 112              		.section	.text.talloc_free,"ax",%progbits
+ 113              		.align	2
+ 114              		.global	talloc_free
+ 116              	talloc_free:
+ 117              	.LFB37:
+  73:comm/msgb.c   **** void talloc_free(void *msg)
+  74:comm/msgb.c   **** {
+ 118              		.loc 1 74 0
+ 119              		.cfi_startproc
+ 120              		@ args = 0, pretend = 0, frame = 0
+ 121              		@ frame_needed = 0, uses_anonymous_args = 0
+ 122              		@ link register save eliminated.
+ 123              	.LVL9:
+  75:comm/msgb.c   **** 	struct supermsg *smsg = container_of(msg, struct supermsg, msg);
+  76:comm/msgb.c   **** 	/* no locking required, since this is atomic */
+  77:comm/msgb.c   **** 	smsg->allocated = 0;
+ 124              		.loc 1 77 0
+ 125 0000 0030A0E3 		mov	r3, #0
+ 126 0004 043040E5 		strb	r3, [r0, #-4]
+  78:comm/msgb.c   **** }
+ 127              		.loc 1 78 0
+ 128 0008 1EFF2FE1 		bx	lr
+ 129              		.cfi_endproc
+ 130              	.LFE37:
+ 132              		.comm	tall_msgb_ctx,4,4
+ 133              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 134              	.LC0:
+ 135 0000 756E6162 		.ascii	"unable to allocate msgb\012\000"
+ 135      6C652074 
+ 135      6F20616C 
+ 135      6C6F6361 
+ 135      7465206D 
+ 136              		.bss
+ 137              		.align	2
+ 138              		.set	.LANCHOR0,. + 0
+ 141              	msgs:
+ 142 0000 00000000 		.space	10624
+ 142      00000000 
+ 142      00000000 
+ 142      00000000 
+ 142      00000000 
+ 143              		.text
+ 144              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 msgb.c
+     /tmp/ccOao3UA.s:12     .text._talloc_zero:0000000000000000 $a
+     /tmp/ccOao3UA.s:15     .text._talloc_zero:0000000000000000 _talloc_zero
+     /tmp/ccOao3UA.s:107    .text._talloc_zero:0000000000000098 $d
+     /tmp/ccOao3UA.s:113    .text.talloc_free:0000000000000000 $a
+     /tmp/ccOao3UA.s:116    .text.talloc_free:0000000000000000 talloc_free
+                            *COM*:0000000000000004 tall_msgb_ctx
+     /tmp/ccOao3UA.s:137    .bss:0000000000000000 $d
+     /tmp/ccOao3UA.s:141    .bss:0000000000000000 msgs
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+memset
+cons_puts

@@ -1,0 +1,126 @@
+   1              		.file	"string.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.strnlen,"ax",%progbits
+  12              		.align	2
+  13              		.global	strnlen
+  15              	strnlen:
+  16              	.LFB2:
+  17              		.file 1 "lib/string.c"
+   1:lib/string.c  **** /*
+   2:lib/string.c  ****  *  linux/lib/string.c
+   3:lib/string.c  ****  *
+   4:lib/string.c  ****  *  Copyright (C) 1991, 1992  Linus Torvalds
+   5:lib/string.c  ****  */
+   6:lib/string.c  **** 
+   7:lib/string.c  **** /*
+   8:lib/string.c  ****  * stupid library routines.. The optimized versions should generally be found
+   9:lib/string.c  ****  * as inline code in <asm-xx/string.h>
+  10:lib/string.c  ****  *
+  11:lib/string.c  ****  * These are buggy as well..
+  12:lib/string.c  ****  *
+  13:lib/string.c  ****  * * Fri Jun 25 1999, Ingo Oeser <ioe@informatik.tu-chemnitz.de>
+  14:lib/string.c  ****  * -  Added strsep() which will replace strtok() soon (because strsep() is
+  15:lib/string.c  ****  *    reentrant and should be faster). Use only strsep() in new code, please.
+  16:lib/string.c  ****  *
+  17:lib/string.c  ****  * * Sat Feb 09 2002, Jason Thomas <jason@topic.com.au>,
+  18:lib/string.c  ****  *                    Matthew Hawkins <matt@mh.dropbear.id.au>
+  19:lib/string.c  ****  * -  Kissed strtok() goodbye
+  20:lib/string.c  ****  */
+  21:lib/string.c  **** 
+  22:lib/string.c  **** #include <sys/types.h>
+  23:lib/string.c  **** #include <string.h>
+  24:lib/string.c  **** #include <ctype.h>
+  25:lib/string.c  **** 
+  26:lib/string.c  **** 
+  27:lib/string.c  **** #ifndef __HAVE_ARCH_STRNLEN
+  28:lib/string.c  **** /**
+  29:lib/string.c  ****  * strnlen - Find the length of a length-limited string
+  30:lib/string.c  ****  * @s: The string to be sized
+  31:lib/string.c  ****  * @count: The maximum number of bytes to search
+  32:lib/string.c  ****  */
+  33:lib/string.c  **** size_t strnlen(const char *s, size_t count)
+  34:lib/string.c  **** {
+  18              		.loc 1 34 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  24              		.loc 1 34 0
+  25 0000 0030A0E1 		mov	r3, r0
+  26              	.LVL1:
+  27              	.L3:
+  35:lib/string.c  **** 	const char *sc;
+  36:lib/string.c  **** 
+  37:lib/string.c  **** 	for (sc = s; count-- && *sc != '\0'; ++sc)
+  28              		.loc 1 37 0 discriminator 1
+  29 0004 000051E3 		cmp	r1, #0
+  30 0008 0320A0E1 		mov	r2, r3
+  31              	.LVL2:
+  32 000c 0300000A 		beq	.L2
+  33              		.loc 1 37 0 is_stmt 0 discriminator 2
+  34 0010 01C0D3E4 		ldrb	ip, [r3], #1	@ zero_extendqisi2
+  35              	.LVL3:
+  36 0014 00005CE3 		cmp	ip, #0
+  37 0018 011041E2 		sub	r1, r1, #1
+  38 001c F8FFFF1A 		bne	.L3
+  39              	.L2:
+  38:lib/string.c  **** 		/* nothing */;
+  39:lib/string.c  **** 	return sc - s;
+  40:lib/string.c  **** }
+  40              		.loc 1 40 0 is_stmt 1
+  41 0020 020060E0 		rsb	r0, r0, r2
+  42              	.LVL4:
+  43 0024 1EFF2FE1 		bx	lr
+  44              		.cfi_endproc
+  45              	.LFE2:
+  47              		.section	.text.strlen,"ax",%progbits
+  48              		.align	2
+  49              		.global	strlen
+  51              	strlen:
+  52              	.LFB3:
+  41:lib/string.c  **** #endif
+  42:lib/string.c  **** 
+  43:lib/string.c  **** size_t strlen(const char *s)
+  44:lib/string.c  **** {
+  53              		.loc 1 44 0
+  54              		.cfi_startproc
+  55              		@ args = 0, pretend = 0, frame = 0
+  56              		@ frame_needed = 0, uses_anonymous_args = 0
+  57              		@ link register save eliminated.
+  58              	.LVL5:
+  59              		.loc 1 44 0
+  60 0000 0030A0E1 		mov	r3, r0
+  61              	.LVL6:
+  62              	.L6:
+  45:lib/string.c  **** 	const char *sc;
+  46:lib/string.c  **** 
+  47:lib/string.c  **** 	for (sc = s; *sc != '\0'; ++sc)
+  63              		.loc 1 47 0 discriminator 1
+  64 0004 0320A0E1 		mov	r2, r3
+  65              	.LVL7:
+  66 0008 0110D3E4 		ldrb	r1, [r3], #1	@ zero_extendqisi2
+  67              	.LVL8:
+  68 000c 000051E3 		cmp	r1, #0
+  69 0010 FBFFFF1A 		bne	.L6
+  48:lib/string.c  **** 		/* nothing */;
+  49:lib/string.c  **** 	return sc - s;
+  50:lib/string.c  **** }
+  70              		.loc 1 50 0
+  71 0014 020060E0 		rsb	r0, r0, r2
+  72              	.LVL9:
+  73 0018 1EFF2FE1 		bx	lr
+  74              		.cfi_endproc
+  75              	.LFE3:
+  77              		.text
+  78              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 string.c
+     /tmp/ccllRSZ8.s:12     .text.strnlen:0000000000000000 $a
+     /tmp/ccllRSZ8.s:15     .text.strnlen:0000000000000000 strnlen
+     /tmp/ccllRSZ8.s:48     .text.strlen:0000000000000000 $a
+     /tmp/ccllRSZ8.s:51     .text.strlen:0000000000000000 strlen
+                     .debug_frame:0000000000000010 $d
+
+NO UNDEFINED SYMBOLS

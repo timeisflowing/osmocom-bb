@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+  25513	    400	  23748	  49661	   c1fd	board/se_j100/loader.highram.elf

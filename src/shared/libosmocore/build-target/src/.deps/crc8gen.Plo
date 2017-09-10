@@ -1,0 +1,15 @@
+crc8gen.lo: crc8gen.c \
+ /home/z00/osmocom-bb/src/target/firmware/include/stdint.h \
+ /home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/include/stdint.h \
+ /home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/stdint.h \
+ ../../include/osmocom/core/bits.h ../include/osmocom/core/crc8gen.h
+
+/home/z00/osmocom-bb/src/target/firmware/include/stdint.h:
+
+/home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/include/stdint.h:
+
+/home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/stdint.h:
+
+../../include/osmocom/core/bits.h:
+
+../include/osmocom/core/crc8gen.h:

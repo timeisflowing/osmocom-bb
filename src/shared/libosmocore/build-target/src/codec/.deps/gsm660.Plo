@@ -1,0 +1,10 @@
+gsm660.lo: ../../../src/codec/gsm660.c \
+ /home/z00/osmocom-bb/src/target/firmware/include/stdint.h \
+ /home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/include/stdint.h \
+ /home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/stdint.h
+
+/home/z00/osmocom-bb/src/target/firmware/include/stdint.h:
+
+/home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/include/stdint.h:
+
+/home/z00/gnuarm/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/stdint.h:

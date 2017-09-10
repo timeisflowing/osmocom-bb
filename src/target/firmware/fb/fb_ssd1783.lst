@@ -1,0 +1,717 @@
+   1              		.file	"fb_ssd1783.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.fb_ssd1783_send_cmdlist,"ax",%progbits
+  12              		.align	2
+  14              	fb_ssd1783_send_cmdlist:
+  15              	.LFB13:
+  16              		.file 1 "fb/fb_ssd1783.c"
+   1:fb/fb_ssd1783.c **** /* Framebuffer implementation - SSD1783 LCD driver for C155 */
+   2:fb/fb_ssd1783.c **** /* Based on ssd1783.c by Steve Markgraf and Harald Welte */
+   3:fb/fb_ssd1783.c **** 
+   4:fb/fb_ssd1783.c **** /* (C) 2010 by Christian Vogel <vogelchr@vogel.cx>
+   5:fb/fb_ssd1783.c ****  *
+   6:fb/fb_ssd1783.c ****  * All Rights Reserved
+   7:fb/fb_ssd1783.c ****  *
+   8:fb/fb_ssd1783.c ****  * This program is free software; you can redistribute it and/or modify
+   9:fb/fb_ssd1783.c ****  * it under the terms of the GNU General Public License as published by
+  10:fb/fb_ssd1783.c ****  * the Free Software Foundation; either version 2 of the License, or
+  11:fb/fb_ssd1783.c ****  * (at your option) any later version.
+  12:fb/fb_ssd1783.c ****  *
+  13:fb/fb_ssd1783.c ****  * This program is distributed in the hope that it will be useful,
+  14:fb/fb_ssd1783.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  15:fb/fb_ssd1783.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  16:fb/fb_ssd1783.c ****  * GNU General Public License for more details.
+  17:fb/fb_ssd1783.c ****  *
+  18:fb/fb_ssd1783.c ****  * You should have received a copy of the GNU General Public License along
+  19:fb/fb_ssd1783.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  20:fb/fb_ssd1783.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  21:fb/fb_ssd1783.c ****  *
+  22:fb/fb_ssd1783.c ****  */
+  23:fb/fb_ssd1783.c **** 
+  24:fb/fb_ssd1783.c **** #include <fb/framebuffer.h>
+  25:fb/fb_ssd1783.c **** #include <fb/fb_rgb332.h>
+  26:fb/fb_ssd1783.c **** 
+  27:fb/fb_ssd1783.c **** #include <stdint.h>
+  28:fb/fb_ssd1783.c **** #include <stdio.h>
+  29:fb/fb_ssd1783.c **** #include <delay.h>
+  30:fb/fb_ssd1783.c **** #include <uwire.h>
+  31:fb/fb_ssd1783.c **** #include <calypso/clock.h>
+  32:fb/fb_ssd1783.c **** 
+  33:fb/fb_ssd1783.c **** #define SSD1783_WIDTH		98
+  34:fb/fb_ssd1783.c **** #define SSD1783_HEIGHT		67
+  35:fb/fb_ssd1783.c **** #define SSD1783_UWIRE_BITLEN 	9
+  36:fb/fb_ssd1783.c **** #define SSD1783_DEV_ID		0
+  37:fb/fb_ssd1783.c **** 
+  38:fb/fb_ssd1783.c **** #define LCD_TOP_FREE_ROWS	3
+  39:fb/fb_ssd1783.c **** #define LCD_LEFT_FREE_COLS	0
+  40:fb/fb_ssd1783.c **** #define	PIXEL_BYTES		3
+  41:fb/fb_ssd1783.c **** #define FONT_HEIGHT		8
+  42:fb/fb_ssd1783.c **** #define FONT_WIDTH		8
+  43:fb/fb_ssd1783.c **** 
+  44:fb/fb_ssd1783.c **** static uint8_t fb_ssd1783_mem[SSD1783_WIDTH * SSD1783_HEIGHT];
+  45:fb/fb_ssd1783.c **** 
+  46:fb/fb_ssd1783.c **** enum ssd1783_cmdflag { CMD, DATA, END };
+  47:fb/fb_ssd1783.c **** 
+  48:fb/fb_ssd1783.c **** struct ssd1783_cmdlist {
+  49:fb/fb_ssd1783.c **** 	enum ssd1783_cmdflag is_cmd:8;	/* 1: is a command, 0: is data, 2: end marker! */
+  50:fb/fb_ssd1783.c **** 	uint8_t data;  			/* 8 bit to send to LC display */
+  51:fb/fb_ssd1783.c **** } __attribute__((packed));
+  52:fb/fb_ssd1783.c **** 
+  53:fb/fb_ssd1783.c **** static const struct ssd1783_cmdlist
+  54:fb/fb_ssd1783.c **** ssd1783_initdata[] = {
+  55:fb/fb_ssd1783.c **** 	{ CMD,  0xD1 }, /* CMD   set internal oscillator on */
+  56:fb/fb_ssd1783.c **** 	{ CMD,  0x94 }, /* CMD   leave sleep mode */
+  57:fb/fb_ssd1783.c **** 	{ CMD,  0xbb }, /* CMD   Set COM Output Scan Direction: */
+  58:fb/fb_ssd1783.c **** 	{ DATA, 0x01 }, /* DATA: 01: COM0-79, then COM159-80 */
+  59:fb/fb_ssd1783.c **** /* -------- DIFFERENT FROM ORIGINAL CODE: -------------- */
+  60:fb/fb_ssd1783.c **** /* we use 8bit per pixel packed RGB 332 */
+  61:fb/fb_ssd1783.c **** 	{ CMD,  0xbc }, /* CMD   Set Data Output Scan Direction */
+  62:fb/fb_ssd1783.c **** 	{ DATA, 0x00 }, /* DATA: column scan, normal rotation, normal display */
+  63:fb/fb_ssd1783.c **** 	{ DATA, 0x00 }, /* DATA: RGB color arrangement R G B R G B ... */
+  64:fb/fb_ssd1783.c **** /*-->*/ { DATA, 0x01 }, /* DATA: 8 bit per pixel mode MSB <RRRGGGBB> LSB */
+  65:fb/fb_ssd1783.c **** /* --------- /DIFFERENT ---------- */
+  66:fb/fb_ssd1783.c **** 	{ CMD,  0xce }, /* CMD   Set 256 Color Look Up Table LUT */
+  67:fb/fb_ssd1783.c **** 	{ DATA, 0x00 },	/* DATA red 000 */
+  68:fb/fb_ssd1783.c **** 	{ DATA, 0x03 },	/* DATA red 001 */
+  69:fb/fb_ssd1783.c **** 	{ DATA, 0x05 },	/* DATA red 010 */
+  70:fb/fb_ssd1783.c **** 	{ DATA, 0x07 },	/* DATA red 011 */
+  71:fb/fb_ssd1783.c **** 	{ DATA, 0x09 },	/* DATA red 100 */
+  72:fb/fb_ssd1783.c **** 	{ DATA, 0x0b },	/* DATA red 101 */
+  73:fb/fb_ssd1783.c **** 	{ DATA, 0x0d },	/* DATA red 110 */
+  74:fb/fb_ssd1783.c **** 	{ DATA, 0x0f },	/* DATA red 111 */
+  75:fb/fb_ssd1783.c **** 	{ DATA, 0x00 },	/* DATA green 000 */
+  76:fb/fb_ssd1783.c **** 	{ DATA, 0x03 },	/* DATA green 001 */
+  77:fb/fb_ssd1783.c **** 	{ DATA, 0x05 },	/* DATA green 010 */
+  78:fb/fb_ssd1783.c **** 	{ DATA, 0x07 },	/* DATA green 011 */
+  79:fb/fb_ssd1783.c **** 	{ DATA, 0x09 },	/* DATA green 100 */
+  80:fb/fb_ssd1783.c **** 	{ DATA, 0x0b },	/* DATA green 101 */
+  81:fb/fb_ssd1783.c **** 	{ DATA, 0x0d },	/* DATA green 110 */
+  82:fb/fb_ssd1783.c **** 	{ DATA, 0x0f },	/* DATA green 111 */
+  83:fb/fb_ssd1783.c **** 	{ DATA, 0x00 },	/* DATA blue 00 */
+  84:fb/fb_ssd1783.c **** 	{ DATA, 0x05 },	/* DATA blue 01 */
+  85:fb/fb_ssd1783.c **** 	{ DATA, 0x0a },	/* DATA blue 10 */
+  86:fb/fb_ssd1783.c **** 	{ DATA, 0x0f },	/* DATA blue 11 */
+  87:fb/fb_ssd1783.c **** 	{ CMD,  0xca }, /* CMD   Set Display Control - Driver Duty Selection */
+  88:fb/fb_ssd1783.c **** 	{ DATA, 0xff }, // can't find description of the values in the original
+  89:fb/fb_ssd1783.c **** 	{ DATA, 0x10 }, // display/ssd1783.c in my datasheet :-(
+  90:fb/fb_ssd1783.c **** 	{ DATA, 0x01 }, //
+  91:fb/fb_ssd1783.c **** 	{ CMD,  0xab }, /* CMD   Set Scroll Start */
+  92:fb/fb_ssd1783.c **** 	{ DATA, 0x00 }, /* DATA: Starting address at block 0 */
+  93:fb/fb_ssd1783.c **** 	{ CMD,  0x20 }, /* CMD   Set power control register */
+  94:fb/fb_ssd1783.c **** 	{ DATA, 0x0b }, /* DATA: booster 6x, reference gen. & int regulator */
+  95:fb/fb_ssd1783.c **** 	{ CMD,  0x81 }, /* CMD   Contrast Lvl & Int. Regul. Resistor Ratio */
+  96:fb/fb_ssd1783.c **** 	{ DATA, 0x29 }, /* DATA: contrast = 0x29 */
+  97:fb/fb_ssd1783.c **** 	{ DATA, 0x05 }, /* DATA: 0x05 = 0b101 -> 1+R2/R1 = 11.37 */
+  98:fb/fb_ssd1783.c **** 	{ CMD,  0xa7 }, /* CMD   Invert Display */
+  99:fb/fb_ssd1783.c **** 	{ CMD,  0x82 }, /* CMD   Set Temperature Compensation Coefficient */
+ 100:fb/fb_ssd1783.c **** 	{ DATA, 0x00 }, /* DATA: Gradient is -0.10 % / degC */
+ 101:fb/fb_ssd1783.c **** 	{ CMD,  0xfb }, /* CMD   Set Biasing Ratio */
+ 102:fb/fb_ssd1783.c **** 	{ DATA, 0x03 }, /* DATA: 1/10 bias */
+ 103:fb/fb_ssd1783.c **** 	{ CMD,  0xf2 }, /* CMD   Set Frame Frequency and N-line inversion */
+ 104:fb/fb_ssd1783.c **** 	{ DATA, 0x08 }, /* DATA: 75 Hz (POR) */
+ 105:fb/fb_ssd1783.c **** 	{ DATA, 0x06 }, /* DATA: n-line inversion: 6 lines */
+ 106:fb/fb_ssd1783.c **** 	{ CMD,  0xf7 }, /* CMD   Select PWM/FRC Select Full Col./8col mode */
+ 107:fb/fb_ssd1783.c **** 	{ DATA, 0x28 }, /* DATA: always 0x28 */
+ 108:fb/fb_ssd1783.c **** 	{ DATA, 0x8c }, /* DATA: 4bit PWM + 2 bit FRC */
+ 109:fb/fb_ssd1783.c **** 	{ DATA, 0x05 }, /* DATA: full color mode */
+ 110:fb/fb_ssd1783.c **** 	{ CMD,  0xaf }, /* CMD   Display On */
+ 111:fb/fb_ssd1783.c **** 	{ END,  0x00 }, /* MARKER: end of list */
+ 112:fb/fb_ssd1783.c **** };
+ 113:fb/fb_ssd1783.c **** 
+ 114:fb/fb_ssd1783.c **** static void
+ 115:fb/fb_ssd1783.c **** fb_ssd1783_send_cmdlist(const struct ssd1783_cmdlist *p){
+  17              		.loc 1 115 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 4
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  22 0000 31402DE9 		stmfd	sp!, {r0, r4, r5, lr}
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 16
+  25              		.loc 1 115 0
+  26 0004 0040A0E1 		mov	r4, r0
+  27              		.cfi_offset 14, -4
+  28              		.cfi_offset 5, -8
+  29              		.cfi_offset 4, -12
+  30              		.cfi_offset 0, -16
+  31              	.LBB5:
+ 116:fb/fb_ssd1783.c **** 	int i=0;
+ 117:fb/fb_ssd1783.c **** 	while(p->is_cmd != END){
+ 118:fb/fb_ssd1783.c **** 		uint16_t sendcmd = p->data;
+ 119:fb/fb_ssd1783.c **** 		if(p->is_cmd == DATA)
+ 120:fb/fb_ssd1783.c **** 			sendcmd |= 0x0100; /* 9th bit is cmd/data flag */
+ 121:fb/fb_ssd1783.c **** 		uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN, &sendcmd, NULL);
+  32              		.loc 1 121 0
+  33 0008 02508DE2 		add	r5, sp, #2
+  34              	.LBE5:
+ 117:fb/fb_ssd1783.c **** 	while(p->is_cmd != END){
+  35              		.loc 1 117 0
+  36 000c 0A0000EA 		b	.L2
+  37              	.LVL1:
+  38              	.L4:
+  39              	.LBB6:
+ 118:fb/fb_ssd1783.c **** 		uint16_t sendcmd = p->data;
+  40              		.loc 1 118 0
+  41 0010 0120D4E5 		ldrb	r2, [r4, #1]	@ zero_extendqisi2
+  42              	.LVL2:
+ 119:fb/fb_ssd1783.c **** 		if(p->is_cmd == DATA)
+  43              		.loc 1 119 0
+  44 0014 010053E3 		cmp	r3, #1
+  45              	.LVL3:
+ 118:fb/fb_ssd1783.c **** 		uint16_t sendcmd = p->data;
+  46              		.loc 1 118 0
+  47 0018 B220CDE1 		strh	r2, [sp, #2]	@ movhi
+  48              		.loc 1 121 0
+  49 001c 0000A0E3 		mov	r0, #0
+ 120:fb/fb_ssd1783.c **** 			sendcmd |= 0x0100; /* 9th bit is cmd/data flag */
+  50              		.loc 1 120 0
+  51 0020 012C8203 		orreq	r2, r2, #256
+  52              	.LVL4:
+  53 0024 B220CD01 		streqh	r2, [sp, #2]	@ movhi
+  54              	.LVL5:
+  55              		.loc 1 121 0
+  56 0028 0910A0E3 		mov	r1, #9
+  57 002c 0520A0E1 		mov	r2, r5
+  58 0030 0030A0E1 		mov	r3, r0
+  59 0034 FEFFFFEB 		bl	uwire_xfer
+ 122:fb/fb_ssd1783.c **** 		p++;
+  60              		.loc 1 122 0
+  61 0038 024084E2 		add	r4, r4, #2
+  62              	.LVL6:
+  63              	.L2:
+  64              	.LBE6:
+ 117:fb/fb_ssd1783.c **** 	while(p->is_cmd != END){
+  65              		.loc 1 117 0 discriminator 1
+  66 003c 0030D4E5 		ldrb	r3, [r4, #0]	@ zero_extendqisi2
+  67 0040 020053E3 		cmp	r3, #2
+  68 0044 F1FFFF1A 		bne	.L4
+ 123:fb/fb_ssd1783.c **** 		i++;
+ 124:fb/fb_ssd1783.c **** 	}
+ 125:fb/fb_ssd1783.c **** }
+  69              		.loc 1 125 0
+  70 0048 3880BDE8 		ldmfd	sp!, {r3, r4, r5, pc}
+  71              		.cfi_endproc
+  72              	.LFE13:
+  74              		.section	.text.fb_ssd1783_flush,"ax",%progbits
+  75              		.align	2
+  77              	fb_ssd1783_flush:
+  78              	.LFB16:
+ 126:fb/fb_ssd1783.c **** 
+ 127:fb/fb_ssd1783.c **** static void
+ 128:fb/fb_ssd1783.c **** fb_ssd1783_init(void){
+ 129:fb/fb_ssd1783.c **** 	printf("%s: initializing LCD.\n",__FUNCTION__);
+ 130:fb/fb_ssd1783.c **** 	calypso_reset_set(RESET_EXT, 0);
+ 131:fb/fb_ssd1783.c **** 	delay_ms(5);
+ 132:fb/fb_ssd1783.c **** 	uwire_init();
+ 133:fb/fb_ssd1783.c **** 	delay_ms(5);
+ 134:fb/fb_ssd1783.c **** 	fb_ssd1783_send_cmdlist(ssd1783_initdata);
+ 135:fb/fb_ssd1783.c **** }
+ 136:fb/fb_ssd1783.c **** 
+ 137:fb/fb_ssd1783.c **** /* somehow the palette is messed up, RRR seems to have the
+ 138:fb/fb_ssd1783.c ****    bits reversed!  R0 R1 R2 G G G B B ---> R2 R1 R0 G G G B B */
+ 139:fb/fb_ssd1783.c **** static uint8_t fix_rrr(uint8_t v){
+ 140:fb/fb_ssd1783.c **** 	return (v & 0x5f) | (v & 0x80) >> 2 | (v & 0x20) << 2;
+ 141:fb/fb_ssd1783.c **** }
+ 142:fb/fb_ssd1783.c **** 
+ 143:fb/fb_ssd1783.c **** static void
+ 144:fb/fb_ssd1783.c **** fb_ssd1783_flush(void){
+  79              		.loc 1 144 0
+  80              		.cfi_startproc
+  81              		@ args = 0, pretend = 0, frame = 24
+  82              		@ frame_needed = 0, uses_anonymous_args = 0
+  83 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+  84              	.LCFI1:
+  85              		.cfi_def_cfa_offset 24
+ 145:fb/fb_ssd1783.c **** 	int x,y;
+ 146:fb/fb_ssd1783.c **** 	uint8_t *p;
+ 147:fb/fb_ssd1783.c **** 	struct ssd1783_cmdlist prepare_disp_write_cmds[] = {
+ 148:fb/fb_ssd1783.c **** 		{ CMD,  0x15 },			 /*  set column address */
+ 149:fb/fb_ssd1783.c **** 		{ DATA, fb_rgb332->damage_x1 },
+  86              		.loc 1 149 0
+  87 0004 70519FE5 		ldr	r5, .L13
+  88              		.cfi_offset 14, -4
+  89              		.cfi_offset 8, -8
+  90              		.cfi_offset 7, -12
+  91              		.cfi_offset 6, -16
+  92              		.cfi_offset 5, -20
+  93              		.cfi_offset 4, -24
+  94 0008 003095E5 		ldr	r3, [r5, #0]
+ 144:fb/fb_ssd1783.c **** fb_ssd1783_flush(void){
+  95              		.loc 1 144 0
+  96 000c 18D04DE2 		sub	sp, sp, #24
+  97              	.LCFI2:
+  98              		.cfi_def_cfa_offset 48
+ 147:fb/fb_ssd1783.c **** 	struct ssd1783_cmdlist prepare_disp_write_cmds[] = {
+  99              		.loc 1 147 0
+ 100 0010 08E0D3E5 		ldrb	lr, [r3, #8]	@ zero_extendqisi2
+ 101 0014 1510A0E3 		mov	r1, #21
+ 102 0018 0A00D3E5 		ldrb	r0, [r3, #10]	@ zero_extendqisi2
+ 103 001c 0020A0E3 		mov	r2, #0
+ 104 0020 0110CDE5 		strb	r1, [sp, #1]
+ 105 0024 0110A0E3 		mov	r1, #1
+ 106 0028 0440D3E5 		ldrb	r4, [r3, #4]	@ zero_extendqisi2
+ 107 002c 06C0D3E5 		ldrb	ip, [r3, #6]	@ zero_extendqisi2
+ 108 0030 0020CDE5 		strb	r2, [sp, #0]
+ 109 0034 0210CDE5 		strb	r1, [sp, #2]
+ 110 0038 0410CDE5 		strb	r1, [sp, #4]
+ 111 003c 0620CDE5 		strb	r2, [sp, #6]
+ 112 0040 0810CDE5 		strb	r1, [sp, #8]
+ 113 0044 0A10CDE5 		strb	r1, [sp, #10]
+ 114 0048 0C20CDE5 		strb	r2, [sp, #12]
+ 115 004c 0F20CDE5 		strb	r2, [sp, #15]
+ 116 0050 01E04EE2 		sub	lr, lr, #1
+ 117 0054 5B1081E2 		add	r1, r1, #91
+ 150:fb/fb_ssd1783.c **** 		{ DATA, fb_rgb332->damage_x2-1 },
+ 151:fb/fb_ssd1783.c **** 		{ CMD,  0x75 },			 /*  set page address (Y) */
+ 152:fb/fb_ssd1783.c **** 		{ DATA, fb_rgb332->damage_y1 },
+ 153:fb/fb_ssd1783.c **** 		{ DATA, fb_rgb332->damage_y2-1 },
+ 154:fb/fb_ssd1783.c **** 		{ CMD,  0x5c },			 /* enter write display ram mode */
+ 155:fb/fb_ssd1783.c **** 		{ END,  0x00 }
+ 156:fb/fb_ssd1783.c **** 	};
+ 157:fb/fb_ssd1783.c **** 	struct ssd1783_cmdlist nop[] = {
+ 118              		.loc 1 157 0
+ 119 0058 20219FE5 		ldr	r2, .L13+4
+ 147:fb/fb_ssd1783.c **** 	struct ssd1783_cmdlist prepare_disp_write_cmds[] = {
+ 120              		.loc 1 147 0
+ 121 005c 05E0CDE5 		strb	lr, [sp, #5]
+ 122 0060 0D10CDE5 		strb	r1, [sp, #13]
+ 123 0064 010040E2 		sub	r0, r0, #1
+ 124 0068 0210A0E3 		mov	r1, #2
+ 125 006c 75E0A0E3 		mov	lr, #117
+ 126 0070 0340CDE5 		strb	r4, [sp, #3]
+ 127 0074 07E0CDE5 		strb	lr, [sp, #7]
+ 128 0078 09C0CDE5 		strb	ip, [sp, #9]
+ 129 007c 0B00CDE5 		strb	r0, [sp, #11]
+ 130 0080 0E10CDE5 		strb	r1, [sp, #14]
+ 131              		.loc 1 157 0
+ 132 0084 002092E5 		ldr	r2, [r2, #0]
+ 158:fb/fb_ssd1783.c **** 		{ CMD, 0x25 }, // NOP command
+ 159:fb/fb_ssd1783.c **** 		{ END, 0x00 }
+ 160:fb/fb_ssd1783.c **** 	};
+ 161:fb/fb_ssd1783.c **** 
+ 162:fb/fb_ssd1783.c **** 	/* If everything's clean, just return */
+ 163:fb/fb_ssd1783.c **** 	if(fb_rgb332->damage_x1 == fb_rgb332->damage_x2 ||
+ 133              		.loc 1 163 0
+ 134 0088 B410D3E1 		ldrh	r1, [r3, #4]
+ 157:fb/fb_ssd1783.c **** 	struct ssd1783_cmdlist nop[] = {
+ 135              		.loc 1 157 0
+ 136 008c 10208DE5 		str	r2, [sp, #16]
+ 137              		.loc 1 163 0
+ 138 0090 B820D3E1 		ldrh	r2, [r3, #8]
+ 139 0094 020051E1 		cmp	r1, r2
+ 140 0098 0300000A 		beq	.L6
+ 141              		.loc 1 163 0 is_stmt 0 discriminator 1
+ 142 009c B620D3E1 		ldrh	r2, [r3, #6]
+ 143 00a0 BA30D3E1 		ldrh	r3, [r3, #10]
+ 144 00a4 030052E1 		cmp	r2, r3
+ 145 00a8 0300001A 		bne	.L7
+ 146              	.L6:
+ 164:fb/fb_ssd1783.c **** 		fb_rgb332->damage_y1 == fb_rgb332->damage_y2){
+ 165:fb/fb_ssd1783.c **** 			printf("%s: no damage\n",__FUNCTION__);
+ 147              		.loc 1 165 0 is_stmt 1
+ 148 00ac D0109FE5 		ldr	r1, .L13+8
+ 149 00b0 D0009FE5 		ldr	r0, .L13+12
+ 150 00b4 FEFFFFEB 		bl	printf
+ 166:fb/fb_ssd1783.c **** 			return;
+ 151              		.loc 1 166 0
+ 152 00b8 2D0000EA 		b	.L5
+ 153              	.L7:
+ 167:fb/fb_ssd1783.c **** 	}
+ 168:fb/fb_ssd1783.c **** 
+ 169:fb/fb_ssd1783.c **** 	fb_ssd1783_send_cmdlist(prepare_disp_write_cmds);
+ 154              		.loc 1 169 0
+ 155 00bc 0D00A0E1 		mov	r0, sp
+ 156 00c0 FEFFFFEB 		bl	fb_ssd1783_send_cmdlist
+ 170:fb/fb_ssd1783.c **** 
+ 171:fb/fb_ssd1783.c **** 	for(y=fb_rgb332->damage_y1;y<fb_rgb332->damage_y2;y++){
+ 157              		.loc 1 171 0
+ 158 00c4 003095E5 		ldr	r3, [r5, #0]
+ 159              	.LBB7:
+ 172:fb/fb_ssd1783.c **** 		p = & fb_rgb332->mem[y * framebuffer->width]; // start of line
+ 173:fb/fb_ssd1783.c **** 		p += fb_rgb332->damage_x1; // start of damage area
+ 174:fb/fb_ssd1783.c **** 
+ 175:fb/fb_ssd1783.c **** 		for(x=fb_rgb332->damage_x1;x<fb_rgb332->damage_x2;x++){
+ 176:fb/fb_ssd1783.c **** 			uint16_t data = 0x0100 | fix_rrr(*p++); // dummy data
+ 177:fb/fb_ssd1783.c **** 			uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN,
+ 178:fb/fb_ssd1783.c **** 					&data, NULL);
+ 160              		.loc 1 178 0
+ 161 00c8 16808DE2 		add	r8, sp, #22
+ 162              	.LBE7:
+ 171:fb/fb_ssd1783.c **** 	for(y=fb_rgb332->damage_y1;y<fb_rgb332->damage_y2;y++){
+ 163              		.loc 1 171 0
+ 164 00cc B640D3E1 		ldrh	r4, [r3, #6]
+ 165              	.LVL7:
+ 166 00d0 1A0000EA 		b	.L9
+ 167              	.LVL8:
+ 168              	.L12:
+ 172:fb/fb_ssd1783.c **** 		p = & fb_rgb332->mem[y * framebuffer->width]; // start of line
+ 169              		.loc 1 172 0
+ 170 00d4 042095E5 		ldr	r2, [r5, #4]
+ 171 00d8 B072D2E1 		ldrh	r7, [r2, #32]
+ 172 00dc 002093E5 		ldr	r2, [r3, #0]
+ 173 00e0 942727E0 		mla	r7, r4, r7, r2
+ 174              	.LVL9:
+ 173:fb/fb_ssd1783.c **** 		p += fb_rgb332->damage_x1; // start of damage area
+ 175              		.loc 1 173 0
+ 176 00e4 B460D3E1 		ldrh	r6, [r3, #4]
+ 177 00e8 067087E0 		add	r7, r7, r6
+ 178              	.LVL10:
+ 175:fb/fb_ssd1783.c **** 		for(x=fb_rgb332->damage_x1;x<fb_rgb332->damage_x2;x++){
+ 179              		.loc 1 175 0
+ 180 00ec 0E0000EA 		b	.L10
+ 181              	.L11:
+ 182              	.LBB10:
+ 176:fb/fb_ssd1783.c **** 			uint16_t data = 0x0100 | fix_rrr(*p++); // dummy data
+ 183              		.loc 1 176 0 discriminator 2
+ 184 00f0 0130D7E4 		ldrb	r3, [r7], #1	@ zero_extendqisi2
+ 185              	.LVL11:
+ 186              	.LBB8:
+ 187              	.LBB9:
+ 140:fb/fb_ssd1783.c **** 	return (v & 0x5f) | (v & 0x80) >> 2 | (v & 0x20) << 2;
+ 188              		.loc 1 140 0 discriminator 2
+ 189 00f4 202003E2 		and	r2, r3, #32
+ 190 00f8 801003E2 		and	r1, r3, #128
+ 191 00fc 0221A0E1 		mov	r2, r2, asl #2
+ 192 0100 212182E1 		orr	r2, r2, r1, lsr #2
+ 193 0104 5F3003E2 		and	r3, r3, #95
+ 194              	.LVL12:
+ 195              	.LBE9:
+ 196              	.LBE8:
+ 176:fb/fb_ssd1783.c **** 			uint16_t data = 0x0100 | fix_rrr(*p++); // dummy data
+ 197              		.loc 1 176 0 discriminator 2
+ 198 0108 033082E1 		orr	r3, r2, r3
+ 199 010c 013C83E3 		orr	r3, r3, #256
+ 177:fb/fb_ssd1783.c **** 			uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN,
+ 200              		.loc 1 177 0 discriminator 2
+ 201 0110 0000A0E3 		mov	r0, #0
+ 176:fb/fb_ssd1783.c **** 			uint16_t data = 0x0100 | fix_rrr(*p++); // dummy data
+ 202              		.loc 1 176 0 discriminator 2
+ 203 0114 B631CDE1 		strh	r3, [sp, #22]	@ movhi
+ 177:fb/fb_ssd1783.c **** 			uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN,
+ 204              		.loc 1 177 0 discriminator 2
+ 205 0118 0910A0E3 		mov	r1, #9
+ 206 011c 0820A0E1 		mov	r2, r8
+ 207 0120 0030A0E1 		mov	r3, r0
+ 208 0124 FEFFFFEB 		bl	uwire_xfer
+ 209              	.LBE10:
+ 175:fb/fb_ssd1783.c **** 		for(x=fb_rgb332->damage_x1;x<fb_rgb332->damage_x2;x++){
+ 210              		.loc 1 175 0 discriminator 2
+ 211 0128 016086E2 		add	r6, r6, #1
+ 212              	.LVL13:
+ 213              	.L10:
+ 175:fb/fb_ssd1783.c **** 		for(x=fb_rgb332->damage_x1;x<fb_rgb332->damage_x2;x++){
+ 214              		.loc 1 175 0 is_stmt 0 discriminator 1
+ 215 012c 003095E5 		ldr	r3, [r5, #0]
+ 216 0130 B830D3E1 		ldrh	r3, [r3, #8]
+ 217 0134 030056E1 		cmp	r6, r3
+ 218 0138 ECFFFFBA 		blt	.L11
+ 171:fb/fb_ssd1783.c **** 	for(y=fb_rgb332->damage_y1;y<fb_rgb332->damage_y2;y++){
+ 219              		.loc 1 171 0 is_stmt 1
+ 220 013c 014084E2 		add	r4, r4, #1
+ 221              	.LVL14:
+ 222              	.L9:
+ 171:fb/fb_ssd1783.c **** 	for(y=fb_rgb332->damage_y1;y<fb_rgb332->damage_y2;y++){
+ 223              		.loc 1 171 0 is_stmt 0 discriminator 1
+ 224 0140 003095E5 		ldr	r3, [r5, #0]
+ 225 0144 BA20D3E1 		ldrh	r2, [r3, #10]
+ 226 0148 020054E1 		cmp	r4, r2
+ 227 014c E0FFFFBA 		blt	.L12
+ 179:fb/fb_ssd1783.c **** 		}
+ 180:fb/fb_ssd1783.c **** 	}
+ 181:fb/fb_ssd1783.c **** 	fb_ssd1783_send_cmdlist(nop);
+ 228              		.loc 1 181 0 is_stmt 1
+ 229 0150 10008DE2 		add	r0, sp, #16
+ 230 0154 FEFFFFEB 		bl	fb_ssd1783_send_cmdlist
+ 182:fb/fb_ssd1783.c **** 
+ 183:fb/fb_ssd1783.c **** 	fb_rgb332->damage_x1 = fb_rgb332->damage_x2 = 0;
+ 231              		.loc 1 183 0
+ 232 0158 1C309FE5 		ldr	r3, .L13
+ 233 015c 003093E5 		ldr	r3, [r3, #0]
+ 234 0160 0020A0E3 		mov	r2, #0	@ movhi
+ 235 0164 B820C3E1 		strh	r2, [r3, #8]	@ movhi
+ 236 0168 B420C3E1 		strh	r2, [r3, #4]	@ movhi
+ 184:fb/fb_ssd1783.c **** 	fb_rgb332->damage_y1 = fb_rgb332->damage_y2 = 0;
+ 237              		.loc 1 184 0
+ 238 016c BA20C3E1 		strh	r2, [r3, #10]	@ movhi
+ 239 0170 B620C3E1 		strh	r2, [r3, #6]	@ movhi
+ 240              	.LVL15:
+ 241              	.L5:
+ 185:fb/fb_ssd1783.c **** }
+ 242              		.loc 1 185 0
+ 243 0174 18D08DE2 		add	sp, sp, #24
+ 244 0178 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 245              	.L14:
+ 246              		.align	2
+ 247              	.L13:
+ 248 017c 00000000 		.word	.LANCHOR0
+ 249 0180 00000000 		.word	.LANCHOR1
+ 250 0184 04000000 		.word	.LANCHOR1+4
+ 251 0188 00000000 		.word	.LC0
+ 252              		.cfi_endproc
+ 253              	.LFE16:
+ 255              		.section	.text.fb_ssd1783_init,"ax",%progbits
+ 256              		.align	2
+ 258              	fb_ssd1783_init:
+ 259              	.LFB14:
+ 128:fb/fb_ssd1783.c **** fb_ssd1783_init(void){
+ 260              		.loc 1 128 0
+ 261              		.cfi_startproc
+ 262              		@ args = 0, pretend = 0, frame = 0
+ 263              		@ frame_needed = 0, uses_anonymous_args = 0
+ 264 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 265              	.LCFI3:
+ 266              		.cfi_def_cfa_offset 8
+ 129:fb/fb_ssd1783.c **** 	printf("%s: initializing LCD.\n",__FUNCTION__);
+ 267              		.loc 1 129 0
+ 268 0004 34409FE5 		ldr	r4, .L16
+ 269              		.cfi_offset 14, -4
+ 270              		.cfi_offset 4, -8
+ 271 0008 34009FE5 		ldr	r0, .L16+4
+ 272 000c 181084E2 		add	r1, r4, #24
+ 273 0010 FEFFFFEB 		bl	printf
+ 130:fb/fb_ssd1783.c **** 	calypso_reset_set(RESET_EXT, 0);
+ 274              		.loc 1 130 0
+ 275 0014 0010A0E3 		mov	r1, #0
+ 276 0018 0400A0E3 		mov	r0, #4
+ 277 001c FEFFFFEB 		bl	calypso_reset_set
+ 131:fb/fb_ssd1783.c **** 	delay_ms(5);
+ 278              		.loc 1 131 0
+ 279 0020 0500A0E3 		mov	r0, #5
+ 280 0024 FEFFFFEB 		bl	delay_ms
+ 132:fb/fb_ssd1783.c **** 	uwire_init();
+ 281              		.loc 1 132 0
+ 282 0028 FEFFFFEB 		bl	uwire_init
+ 133:fb/fb_ssd1783.c **** 	delay_ms(5);
+ 283              		.loc 1 133 0
+ 284 002c 0500A0E3 		mov	r0, #5
+ 285 0030 FEFFFFEB 		bl	delay_ms
+ 134:fb/fb_ssd1783.c **** 	fb_ssd1783_send_cmdlist(ssd1783_initdata);
+ 286              		.loc 1 134 0
+ 287 0034 280084E2 		add	r0, r4, #40
+ 135:fb/fb_ssd1783.c **** }
+ 288              		.loc 1 135 0
+ 289 0038 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 134:fb/fb_ssd1783.c **** 	fb_ssd1783_send_cmdlist(ssd1783_initdata);
+ 290              		.loc 1 134 0
+ 291 003c FEFFFFEA 		b	fb_ssd1783_send_cmdlist
+ 292              	.L17:
+ 293              		.align	2
+ 294              	.L16:
+ 295 0040 00000000 		.word	.LANCHOR1
+ 296 0044 0F000000 		.word	.LC1
+ 297              		.cfi_endproc
+ 298              	.LFE14:
+ 300              		.global	framebuffer
+ 301              		.global	fb_rgb332
+ 302              		.section	.rodata
+ 303              		.align	2
+ 304              		.set	.LANCHOR1,. + 0
+ 307              	C.1.2600:
+ 308 0000 00       		.byte	0
+ 309 0001 25       		.byte	37
+ 310 0002 02       		.byte	2
+ 311 0003 00       		.byte	0
+ 314              	__FUNCTION__.1737:
+ 315 0004 66625F73 		.ascii	"fb_ssd1783_flush\000"
+ 315      73643137 
+ 315      38335F66 
+ 315      6C757368 
+ 315      00
+ 316 0015 000000   		.space	3
+ 319              	__FUNCTION__.1725:
+ 320 0018 66625F73 		.ascii	"fb_ssd1783_init\000"
+ 320      73643137 
+ 320      38335F69 
+ 320      6E697400 
+ 323              	ssd1783_initdata:
+ 324 0028 00       		.byte	0
+ 325 0029 D1       		.byte	-47
+ 326 002a 00       		.byte	0
+ 327 002b 94       		.byte	-108
+ 328 002c 00       		.byte	0
+ 329 002d BB       		.byte	-69
+ 330 002e 01       		.byte	1
+ 331 002f 01       		.byte	1
+ 332 0030 00       		.byte	0
+ 333 0031 BC       		.byte	-68
+ 334 0032 01       		.byte	1
+ 335 0033 00       		.byte	0
+ 336 0034 01       		.byte	1
+ 337 0035 00       		.byte	0
+ 338 0036 01       		.byte	1
+ 339 0037 01       		.byte	1
+ 340 0038 00       		.byte	0
+ 341 0039 CE       		.byte	-50
+ 342 003a 01       		.byte	1
+ 343 003b 00       		.byte	0
+ 344 003c 01       		.byte	1
+ 345 003d 03       		.byte	3
+ 346 003e 01       		.byte	1
+ 347 003f 05       		.byte	5
+ 348 0040 01       		.byte	1
+ 349 0041 07       		.byte	7
+ 350 0042 01       		.byte	1
+ 351 0043 09       		.byte	9
+ 352 0044 01       		.byte	1
+ 353 0045 0B       		.byte	11
+ 354 0046 01       		.byte	1
+ 355 0047 0D       		.byte	13
+ 356 0048 01       		.byte	1
+ 357 0049 0F       		.byte	15
+ 358 004a 01       		.byte	1
+ 359 004b 00       		.byte	0
+ 360 004c 01       		.byte	1
+ 361 004d 03       		.byte	3
+ 362 004e 01       		.byte	1
+ 363 004f 05       		.byte	5
+ 364 0050 01       		.byte	1
+ 365 0051 07       		.byte	7
+ 366 0052 01       		.byte	1
+ 367 0053 09       		.byte	9
+ 368 0054 01       		.byte	1
+ 369 0055 0B       		.byte	11
+ 370 0056 01       		.byte	1
+ 371 0057 0D       		.byte	13
+ 372 0058 01       		.byte	1
+ 373 0059 0F       		.byte	15
+ 374 005a 01       		.byte	1
+ 375 005b 00       		.byte	0
+ 376 005c 01       		.byte	1
+ 377 005d 05       		.byte	5
+ 378 005e 01       		.byte	1
+ 379 005f 0A       		.byte	10
+ 380 0060 01       		.byte	1
+ 381 0061 0F       		.byte	15
+ 382 0062 00       		.byte	0
+ 383 0063 CA       		.byte	-54
+ 384 0064 01       		.byte	1
+ 385 0065 FF       		.byte	-1
+ 386 0066 01       		.byte	1
+ 387 0067 10       		.byte	16
+ 388 0068 01       		.byte	1
+ 389 0069 01       		.byte	1
+ 390 006a 00       		.byte	0
+ 391 006b AB       		.byte	-85
+ 392 006c 01       		.byte	1
+ 393 006d 00       		.byte	0
+ 394 006e 00       		.byte	0
+ 395 006f 20       		.byte	32
+ 396 0070 01       		.byte	1
+ 397 0071 0B       		.byte	11
+ 398 0072 00       		.byte	0
+ 399 0073 81       		.byte	-127
+ 400 0074 01       		.byte	1
+ 401 0075 29       		.byte	41
+ 402 0076 01       		.byte	1
+ 403 0077 05       		.byte	5
+ 404 0078 00       		.byte	0
+ 405 0079 A7       		.byte	-89
+ 406 007a 00       		.byte	0
+ 407 007b 82       		.byte	-126
+ 408 007c 01       		.byte	1
+ 409 007d 00       		.byte	0
+ 410 007e 00       		.byte	0
+ 411 007f FB       		.byte	-5
+ 412 0080 01       		.byte	1
+ 413 0081 03       		.byte	3
+ 414 0082 00       		.byte	0
+ 415 0083 F2       		.byte	-14
+ 416 0084 01       		.byte	1
+ 417 0085 08       		.byte	8
+ 418 0086 01       		.byte	1
+ 419 0087 06       		.byte	6
+ 420 0088 00       		.byte	0
+ 421 0089 F7       		.byte	-9
+ 422 008a 01       		.byte	1
+ 423 008b 28       		.byte	40
+ 424 008c 01       		.byte	1
+ 425 008d 8C       		.byte	-116
+ 426 008e 01       		.byte	1
+ 427 008f 05       		.byte	5
+ 428 0090 00       		.byte	0
+ 429 0091 AF       		.byte	-81
+ 430 0092 02       		.byte	2
+ 431 0093 00       		.byte	0
+ 432              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 433              	.LC0:
+ 434 0000 25733A20 		.ascii	"%s: no damage\012\000"
+ 434      6E6F2064 
+ 434      616D6167 
+ 434      650A00
+ 435              	.LC1:
+ 436 000f 25733A20 		.ascii	"%s: initializing LCD.\012\000"
+ 436      696E6974 
+ 436      69616C69 
+ 436      7A696E67 
+ 436      204C4344 
+ 437              		.data
+ 438              		.align	2
+ 439              		.set	.LANCHOR0,. + 0
+ 442              	fb_rgb332:
+ 443 0000 3C000000 		.word	fb_ssd1783_rgb332
+ 446              	framebuffer:
+ 447 0004 08000000 		.word	fb_ssd1783_framebuffer
+ 450              	fb_ssd1783_framebuffer:
+ 451 0008 73736431 		.ascii	"ssd1783\000"
+ 451      37383300 
+ 452 0010 00000000 		.word	fb_ssd1783_init
+ 453 0014 00000000 		.word	fb_rgb332_clear
+ 454 0018 00000000 		.word	fb_rgb332_boxto
+ 455 001c 00000000 		.word	fb_rgb332_lineto
+ 456 0020 00000000 		.word	fb_rgb332_putstr
+ 457 0024 00000000 		.word	fb_ssd1783_flush
+ 458 0028 6200     		.short	98
+ 459 002a 4300     		.short	67
+ 460 002c 00000000 		.space	16
+ 460      00000000 
+ 460      00000000 
+ 460      00000000 
+ 463              	fb_ssd1783_rgb332:
+ 464 003c 00000000 		.word	fb_ssd1783_mem
+ 465 0040 00000000 		.space	8
+ 465      00000000 
+ 466              		.bss
+ 467              		.align	2
+ 470              	fb_ssd1783_mem:
+ 471 0000 00000000 		.space	6566
+ 471      00000000 
+ 471      00000000 
+ 471      00000000 
+ 471      00000000 
+ 472 19a6 0000     		.text
+ 473              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 fb_ssd1783.c
+     /tmp/ccQt9YWG.s:12     .text.fb_ssd1783_send_cmdlist:0000000000000000 $a
+     /tmp/ccQt9YWG.s:14     .text.fb_ssd1783_send_cmdlist:0000000000000000 fb_ssd1783_send_cmdlist
+     /tmp/ccQt9YWG.s:75     .text.fb_ssd1783_flush:0000000000000000 $a
+     /tmp/ccQt9YWG.s:77     .text.fb_ssd1783_flush:0000000000000000 fb_ssd1783_flush
+     /tmp/ccQt9YWG.s:248    .text.fb_ssd1783_flush:000000000000017c $d
+     /tmp/ccQt9YWG.s:256    .text.fb_ssd1783_init:0000000000000000 $a
+     /tmp/ccQt9YWG.s:258    .text.fb_ssd1783_init:0000000000000000 fb_ssd1783_init
+     /tmp/ccQt9YWG.s:295    .text.fb_ssd1783_init:0000000000000040 $d
+     /tmp/ccQt9YWG.s:446    .data:0000000000000004 framebuffer
+     /tmp/ccQt9YWG.s:442    .data:0000000000000000 fb_rgb332
+     /tmp/ccQt9YWG.s:303    .rodata:0000000000000000 $d
+     /tmp/ccQt9YWG.s:307    .rodata:0000000000000000 C.1.2600
+     /tmp/ccQt9YWG.s:314    .rodata:0000000000000004 __FUNCTION__.1737
+     /tmp/ccQt9YWG.s:319    .rodata:0000000000000018 __FUNCTION__.1725
+     /tmp/ccQt9YWG.s:323    .rodata:0000000000000028 ssd1783_initdata
+     /tmp/ccQt9YWG.s:438    .data:0000000000000000 $d
+     /tmp/ccQt9YWG.s:463    .data:000000000000003c fb_ssd1783_rgb332
+     /tmp/ccQt9YWG.s:450    .data:0000000000000008 fb_ssd1783_framebuffer
+     /tmp/ccQt9YWG.s:470    .bss:0000000000000000 fb_ssd1783_mem
+     /tmp/ccQt9YWG.s:467    .bss:0000000000000000 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+uwire_xfer
+printf
+calypso_reset_set
+delay_ms
+uwire_init
+fb_rgb332_clear
+fb_rgb332_boxto
+fb_rgb332_lineto
+fb_rgb332_putstr

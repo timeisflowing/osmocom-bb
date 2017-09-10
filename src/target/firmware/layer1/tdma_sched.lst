@@ -1,0 +1,1086 @@
+   1              		.file	"tdma_sched.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.tdma_end_set,"ax",%progbits
+  12              		.align	2
+  13              		.global	tdma_end_set
+  15              	tdma_end_set:
+  16              	.LFB17:
+  17              		.file 1 "layer1/tdma_sched.c"
+   1:layer1/tdma_sched.c **** /* TDMA Scheduler Implementation */
+   2:layer1/tdma_sched.c **** 
+   3:layer1/tdma_sched.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:layer1/tdma_sched.c ****  *
+   5:layer1/tdma_sched.c ****  * All Rights Reserved
+   6:layer1/tdma_sched.c ****  *
+   7:layer1/tdma_sched.c ****  * This program is free software; you can redistribute it and/or modify
+   8:layer1/tdma_sched.c ****  * it under the terms of the GNU General Public License as published by
+   9:layer1/tdma_sched.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:layer1/tdma_sched.c ****  * (at your option) any later version.
+  11:layer1/tdma_sched.c ****  *
+  12:layer1/tdma_sched.c ****  * This program is distributed in the hope that it will be useful,
+  13:layer1/tdma_sched.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:layer1/tdma_sched.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:layer1/tdma_sched.c ****  * GNU General Public License for more details.
+  16:layer1/tdma_sched.c ****  *
+  17:layer1/tdma_sched.c ****  * You should have received a copy of the GNU General Public License along
+  18:layer1/tdma_sched.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:layer1/tdma_sched.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:layer1/tdma_sched.c ****  *
+  21:layer1/tdma_sched.c ****  */
+  22:layer1/tdma_sched.c **** 
+  23:layer1/tdma_sched.c **** #include <stdint.h>
+  24:layer1/tdma_sched.c **** #include <stdio.h>
+  25:layer1/tdma_sched.c **** #include <string.h>
+  26:layer1/tdma_sched.c **** 
+  27:layer1/tdma_sched.c **** #include <defines.h>
+  28:layer1/tdma_sched.c **** #include <debug.h>
+  29:layer1/tdma_sched.c **** #include <osmocom/gsm/gsm_utils.h>
+  30:layer1/tdma_sched.c **** 
+  31:layer1/tdma_sched.c **** #include <layer1/tdma_sched.h>
+  32:layer1/tdma_sched.c **** #include <layer1/sync.h>
+  33:layer1/tdma_sched.c **** 
+  34:layer1/tdma_sched.c **** #include <calypso/dsp.h>
+  35:layer1/tdma_sched.c **** 
+  36:layer1/tdma_sched.c **** /* dummy function to mark end of set */
+  37:layer1/tdma_sched.c **** int tdma_end_set(__unused uint8_t p1, __unused uint8_t p2,
+  38:layer1/tdma_sched.c **** 		 __unused uint16_t p3)
+  39:layer1/tdma_sched.c **** {
+  18              		.loc 1 39 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  40:layer1/tdma_sched.c **** 	return 0;
+  41:layer1/tdma_sched.c **** }
+  24              		.loc 1 41 0
+  25 0000 0000A0E3 		mov	r0, #0
+  26              	.LVL1:
+  27 0004 1EFF2FE1 		bx	lr
+  28              		.cfi_endproc
+  29              	.LFE17:
+  31              		.global	__umodsi3
+  32              		.section	.text.tdma_schedule,"ax",%progbits
+  33              		.align	2
+  34              		.global	tdma_schedule
+  36              	tdma_schedule:
+  37              	.LFB19:
+  42:layer1/tdma_sched.c **** 
+  43:layer1/tdma_sched.c **** static uint8_t wrap_bucket(uint8_t offset)
+  44:layer1/tdma_sched.c **** {
+  45:layer1/tdma_sched.c **** 	uint16_t bucket;
+  46:layer1/tdma_sched.c **** 
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+  49:layer1/tdma_sched.c **** 
+  50:layer1/tdma_sched.c **** 	return bucket;
+  51:layer1/tdma_sched.c **** }
+  52:layer1/tdma_sched.c **** 
+  53:layer1/tdma_sched.c **** /* Schedule an item at 'frame_offset' TDMA frames in the future */
+  54:layer1/tdma_sched.c **** int tdma_schedule(uint8_t frame_offset, tdma_sched_cb *cb,
+  55:layer1/tdma_sched.c ****                   uint8_t p1, uint8_t p2, uint16_t p3, int16_t prio)
+  56:layer1/tdma_sched.c **** {
+  38              		.loc 1 56 0
+  39              		.cfi_startproc
+  40              		@ args = 8, pretend = 0, frame = 0
+  41              		@ frame_needed = 0, uses_anonymous_args = 0
+  42              	.LVL2:
+  43 0000 F0452DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, sl, lr}
+  44              	.LCFI0:
+  45              		.cfi_def_cfa_offset 28
+  46              	.LBB17:
+  47              	.LBB20:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+  48              		.loc 1 47 0
+  49 0004 84509FE5 		ldr	r5, .L5
+  50              		.cfi_offset 14, -4
+  51              		.cfi_offset 10, -8
+  52              		.cfi_offset 8, -12
+  53              		.cfi_offset 7, -16
+  54              		.cfi_offset 6, -20
+  55              		.cfi_offset 5, -24
+  56              		.cfi_offset 4, -28
+  57              	.LBE20:
+  58              	.LBE17:
+  59              		.loc 1 56 0
+  60 0008 FF8003E2 		and	r8, r3, #255
+  61              	.LBB23:
+  62              	.LBB19:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+  63              		.loc 1 47 0
+  64 000c 303AD5E5 		ldrb	r3, [r5, #2608]	@ zero_extendqisi2
+  65              	.LVL3:
+  66              	.LBE19:
+  67              	.LBE23:
+  68              		.loc 1 56 0
+  69 0010 FF0000E2 		and	r0, r0, #255
+  70              	.LVL4:
+  71              	.LBB24:
+  72              	.LBB21:
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+  73              		.loc 1 48 0
+  74 0014 030080E0 		add	r0, r0, r3
+  75              	.LVL5:
+  76              	.LBE21:
+  77              	.LBE24:
+  78              		.loc 1 56 0
+  79 0018 0140A0E1 		mov	r4, r1
+  80              	.LBB25:
+  81              	.LBB18:
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+  82              		.loc 1 48 0
+  83 001c 1910A0E3 		mov	r1, #25
+  84              	.LVL6:
+  85              	.LBE18:
+  86              	.LBE25:
+  87              		.loc 1 56 0
+  88 0020 FFA002E2 		and	sl, r2, #255
+  89              	.LBB26:
+  90              	.LBB22:
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+  91              		.loc 1 48 0
+  92 0024 FEFFFFEB 		bl	__umodsi3
+  93              	.LVL7:
+  94              	.LBE22:
+  95              	.LBE26:
+  57:layer1/tdma_sched.c **** 	struct tdma_scheduler *sched = &l1s.tdma_sched;
+  58:layer1/tdma_sched.c **** 	uint8_t bucket_nr = wrap_bucket(frame_offset);
+  59:layer1/tdma_sched.c **** 	struct tdma_sched_bucket *bucket = &sched->bucket[bucket_nr];
+  60:layer1/tdma_sched.c **** 	struct tdma_sched_item *sched_item;
+  61:layer1/tdma_sched.c **** 
+  62:layer1/tdma_sched.c **** 	if (bucket->num_items >= ARRAY_SIZE(bucket->item)) {
+  96              		.loc 1 62 0
+  97 0028 6420A0E3 		mov	r2, #100
+  59:layer1/tdma_sched.c **** 	struct tdma_sched_bucket *bucket = &sched->bucket[bucket_nr];
+  98              		.loc 1 59 0
+  99 002c FF0000E2 		and	r0, r0, #255
+ 100              	.LVL8:
+ 101              		.loc 1 62 0
+ 102 0030 900202E0 		mul	r2, r0, r2
+ 103 0034 021085E0 		add	r1, r5, r2
+ 104 0038 CC30D1E5 		ldrb	r3, [r1, #204]	@ zero_extendqisi2
+ 105 003c 070053E3 		cmp	r3, #7
+  56:layer1/tdma_sched.c **** {
+ 106              		.loc 1 56 0
+ 107 0040 BC71DDE1 		ldrh	r7, [sp, #28]
+ 108 0044 F062DDE1 		ldrsh	r6, [sp, #32]
+ 109              		.loc 1 62 0
+ 110 0048 0300009A 		bls	.L3
+  63:layer1/tdma_sched.c **** 		puts("tdma_schedule bucket overflow\n");
+ 111              		.loc 1 63 0
+ 112 004c 40009FE5 		ldr	r0, .L5+4
+ 113              	.LVL9:
+ 114 0050 FEFFFFEB 		bl	puts
+  64:layer1/tdma_sched.c **** 		return -1;
+ 115              		.loc 1 64 0
+ 116 0054 0000E0E3 		mvn	r0, #0
+ 117 0058 F085BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, sl, pc}
+ 118              	.LVL10:
+ 119              	.L3:
+  65:layer1/tdma_sched.c **** 	}
+  66:layer1/tdma_sched.c **** 
+  67:layer1/tdma_sched.c **** 	sched_item = &bucket->item[bucket->num_items++];
+ 120              		.loc 1 67 0
+ 121 005c 010083E2 		add	r0, r3, #1
+ 122              	.LVL11:
+ 123 0060 CC00C1E5 		strb	r0, [r1, #204]
+  68:layer1/tdma_sched.c **** 
+  69:layer1/tdma_sched.c **** 	sched_item->cb = cb;
+ 124              		.loc 1 69 0
+ 125 0064 0C10A0E3 		mov	r1, #12
+ 126 0068 912323E0 		mla	r3, r1, r3, r2
+ 127 006c 035085E0 		add	r5, r5, r3
+  70:layer1/tdma_sched.c **** 	sched_item->p1 = p1;
+ 128              		.loc 1 70 0
+ 129 0070 703085E2 		add	r3, r5, #112
+  69:layer1/tdma_sched.c **** 	sched_item->cb = cb;
+ 130              		.loc 1 69 0
+ 131 0074 6C4085E5 		str	r4, [r5, #108]
+ 132              		.loc 1 70 0
+ 133 0078 70A0C5E5 		strb	sl, [r5, #112]
+  71:layer1/tdma_sched.c **** 	sched_item->p2 = p2;
+ 134              		.loc 1 71 0
+ 135 007c 0180C3E5 		strb	r8, [r3, #1]
+  72:layer1/tdma_sched.c **** 	sched_item->p3 = p3;
+ 136              		.loc 1 72 0
+ 137 0080 B270C3E1 		strh	r7, [r3, #2]	@ movhi
+  73:layer1/tdma_sched.c **** 	sched_item->prio = prio;
+ 138              		.loc 1 73 0
+ 139 0084 B467C5E1 		strh	r6, [r5, #116]	@ movhi
+  74:layer1/tdma_sched.c **** 
+  75:layer1/tdma_sched.c **** 	return 0;
+ 140              		.loc 1 75 0
+ 141 0088 0000A0E3 		mov	r0, #0
+  76:layer1/tdma_sched.c **** }
+ 142              		.loc 1 76 0
+ 143 008c F085BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, sl, pc}
+ 144              	.L6:
+ 145              		.align	2
+ 146              	.L5:
+ 147 0090 00000000 		.word	l1s
+ 148 0094 00000000 		.word	.LC0
+ 149              		.cfi_endproc
+ 150              	.LFE19:
+ 152              		.section	.text.tdma_schedule_set,"ax",%progbits
+ 153              		.align	2
+ 154              		.global	tdma_schedule_set
+ 156              	tdma_schedule_set:
+ 157              	.LFB20:
+  77:layer1/tdma_sched.c **** 
+  78:layer1/tdma_sched.c **** /* Schedule a set of items starting from 'frame_offset' TDMA frames in the future */
+  79:layer1/tdma_sched.c **** int tdma_schedule_set(uint8_t frame_offset, const struct tdma_sched_item *item_set, uint16_t p3)
+  80:layer1/tdma_sched.c **** {
+ 158              		.loc 1 80 0
+ 159              		.cfi_startproc
+ 160              		@ args = 0, pretend = 0, frame = 4
+ 161              		@ frame_needed = 0, uses_anonymous_args = 0
+ 162              	.LVL12:
+ 163 0000 F14F2DE9 		stmfd	sp!, {r0, r4, r5, r6, r7, r8, r9, sl, fp, lr}
+ 164              	.LCFI1:
+ 165              		.cfi_def_cfa_offset 40
+ 166              	.LBB27:
+ 167              	.LBB29:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+ 168              		.loc 1 47 0
+ 169 0004 D8509FE5 		ldr	r5, .L14
+ 170              		.cfi_offset 14, -4
+ 171              		.cfi_offset 11, -8
+ 172              		.cfi_offset 10, -12
+ 173              		.cfi_offset 9, -16
+ 174              		.cfi_offset 8, -20
+ 175              		.cfi_offset 7, -24
+ 176              		.cfi_offset 6, -28
+ 177              		.cfi_offset 5, -32
+ 178              		.cfi_offset 4, -36
+ 179              		.cfi_offset 0, -40
+ 180              	.LBE29:
+ 181              	.LBE27:
+ 182              		.loc 1 80 0
+ 183 0008 FF7000E2 		and	r7, r0, #255
+ 184              	.LVL13:
+ 185              	.LBB32:
+ 186              	.LBB30:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+ 187              		.loc 1 47 0
+ 188 000c 300AD5E5 		ldrb	r0, [r5, #2608]	@ zero_extendqisi2
+ 189              	.LVL14:
+ 190              	.LBE30:
+ 191              	.LBE32:
+ 192              		.loc 1 80 0
+ 193 0010 0228A0E1 		mov	r2, r2, asl #16
+ 194              	.LVL15:
+ 195 0014 2228A0E1 		mov	r2, r2, lsr #16
+ 196 0018 0160A0E1 		mov	r6, r1
+ 197              	.LBB33:
+ 198              	.LBB28:
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+ 199              		.loc 1 48 0
+ 200 001c 000087E0 		add	r0, r7, r0
+ 201 0020 1910A0E3 		mov	r1, #25
+ 202              	.LVL16:
+ 203              	.LBE28:
+ 204              	.LBE33:
+ 205              		.loc 1 80 0
+ 206 0024 00208DE5 		str	r2, [sp, #0]
+ 207              	.LBB34:
+ 208              	.LBB31:
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+ 209              		.loc 1 48 0
+ 210 0028 FEFFFFEB 		bl	__umodsi3
+  81:layer1/tdma_sched.c **** 	struct tdma_scheduler *sched = &l1s.tdma_sched;
+  82:layer1/tdma_sched.c **** 	uint8_t bucket_nr = wrap_bucket(frame_offset);
+  83:layer1/tdma_sched.c **** 	int i, j;
+  84:layer1/tdma_sched.c **** 
+  85:layer1/tdma_sched.c **** 	for (i = 0, j = 0; 1; i++) {
+ 211              		.loc 1 85 0
+ 212 002c 0040A0E3 		mov	r4, #0
+  50:layer1/tdma_sched.c **** 	return bucket;
+ 213              		.loc 1 50 0
+ 214 0030 FF9000E2 		and	r9, r0, #255
+ 215              	.LVL17:
+ 216              	.LBE31:
+ 217              	.LBE34:
+ 218              	.LBB35:
+  86:layer1/tdma_sched.c **** 		const struct tdma_sched_item *sched_item = &item_set[i];
+  87:layer1/tdma_sched.c **** 		struct tdma_sched_bucket *bucket = &sched->bucket[bucket_nr];
+  88:layer1/tdma_sched.c **** 
+  89:layer1/tdma_sched.c **** 		if (sched_item->cb == &tdma_end_set) {
+  90:layer1/tdma_sched.c **** 			/* end of scheduler set, return */
+  91:layer1/tdma_sched.c **** 			break;
+  92:layer1/tdma_sched.c **** 		}
+  93:layer1/tdma_sched.c **** 
+  94:layer1/tdma_sched.c **** 		if (sched_item->cb == NULL) {
+  95:layer1/tdma_sched.c **** 			/* advance to next bucket (== TDMA frame) */
+  96:layer1/tdma_sched.c **** 			bucket_nr = wrap_bucket(++frame_offset);
+  97:layer1/tdma_sched.c **** 			j++;
+  98:layer1/tdma_sched.c **** 			continue;
+  99:layer1/tdma_sched.c **** 		}
+ 100:layer1/tdma_sched.c **** 		/* check for bucket overflow */
+ 101:layer1/tdma_sched.c **** 		if (bucket->num_items >= ARRAY_SIZE(bucket->item)) {
+ 102:layer1/tdma_sched.c **** 			puts("tdma_schedule bucket overflow\n");
+ 103:layer1/tdma_sched.c **** 			return -1;
+ 104:layer1/tdma_sched.c **** 		}
+ 105:layer1/tdma_sched.c **** 		/* copy the item from the set into the current bucket item position */
+ 106:layer1/tdma_sched.c **** 		memcpy(&bucket->item[bucket->num_items], sched_item, sizeof(*sched_item));
+ 219              		.loc 1 106 0
+ 220 0034 0CB0A0E3 		mov	fp, #12
+ 221              	.LVL18:
+ 222              	.L12:
+  89:layer1/tdma_sched.c **** 		if (sched_item->cb == &tdma_end_set) {
+ 223              		.loc 1 89 0
+ 224 0038 003096E5 		ldr	r3, [r6, #0]
+ 225 003c A4209FE5 		ldr	r2, .L14+4
+ 226 0040 020053E1 		cmp	r3, r2
+ 227 0044 2400000A 		beq	.L8
+  94:layer1/tdma_sched.c **** 		if (sched_item->cb == NULL) {
+ 228              		.loc 1 94 0
+ 229 0048 000053E3 		cmp	r3, #0
+ 230 004c 0800001A 		bne	.L9
+  96:layer1/tdma_sched.c **** 			bucket_nr = wrap_bucket(++frame_offset);
+ 231              		.loc 1 96 0
+ 232 0050 017087E2 		add	r7, r7, #1
+ 233              	.LVL19:
+ 234              	.LBB36:
+ 235              	.LBB38:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+ 236              		.loc 1 47 0
+ 237 0054 300AD5E5 		ldrb	r0, [r5, #2608]	@ zero_extendqisi2
+ 238              	.LBE38:
+ 239              	.LBE36:
+  96:layer1/tdma_sched.c **** 			bucket_nr = wrap_bucket(++frame_offset);
+ 240              		.loc 1 96 0
+ 241 0058 FF7007E2 		and	r7, r7, #255
+ 242              	.LVL20:
+ 243              	.LBB40:
+ 244              	.LBB37:
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+ 245              		.loc 1 48 0
+ 246 005c 000087E0 		add	r0, r7, r0
+ 247 0060 1910A0E3 		mov	r1, #25
+ 248 0064 FEFFFFEB 		bl	__umodsi3
+ 249              	.LBE37:
+ 250              	.LBE40:
+  97:layer1/tdma_sched.c **** 			j++;
+ 251              		.loc 1 97 0
+ 252 0068 014084E2 		add	r4, r4, #1
+ 253              	.LVL21:
+ 254              	.LBB41:
+ 255              	.LBB39:
+  50:layer1/tdma_sched.c **** 	return bucket;
+ 256              		.loc 1 50 0
+ 257 006c FF9000E2 		and	r9, r0, #255
+ 258              	.LVL22:
+ 259              	.LBE39:
+ 260              	.LBE41:
+  98:layer1/tdma_sched.c **** 			continue;
+ 261              		.loc 1 98 0
+ 262 0070 170000EA 		b	.L10
+ 263              	.LVL23:
+ 264              	.L9:
+ 101:layer1/tdma_sched.c **** 		if (bucket->num_items >= ARRAY_SIZE(bucket->item)) {
+ 265              		.loc 1 101 0
+ 266 0074 6430A0E3 		mov	r3, #100
+ 267 0078 93090AE0 		mul	sl, r3, r9
+ 268 007c 0A8085E0 		add	r8, r5, sl
+ 269 0080 CC30D8E5 		ldrb	r3, [r8, #204]	@ zero_extendqisi2
+ 270 0084 070053E3 		cmp	r3, #7
+ 271 0088 0300009A 		bls	.L11
+ 102:layer1/tdma_sched.c **** 			puts("tdma_schedule bucket overflow\n");
+ 272              		.loc 1 102 0
+ 273 008c 58009FE5 		ldr	r0, .L14+8
+ 274 0090 FEFFFFEB 		bl	puts
+ 103:layer1/tdma_sched.c **** 			return -1;
+ 275              		.loc 1 103 0
+ 276 0094 0040E0E3 		mvn	r4, #0
+ 277              	.LVL24:
+ 278 0098 0F0000EA 		b	.L8
+ 279              	.LVL25:
+ 280              	.L11:
+ 281              		.loc 1 106 0
+ 282 009c 6C008AE2 		add	r0, sl, #108
+ 283 00a0 050080E0 		add	r0, r0, r5
+ 284 00a4 9B0320E0 		mla	r0, fp, r3, r0
+ 285 00a8 0C20A0E3 		mov	r2, #12
+ 286 00ac 0610A0E1 		mov	r1, r6
+ 287 00b0 FEFFFFEB 		bl	memcpy
+ 107:layer1/tdma_sched.c **** 		bucket->item[bucket->num_items].p3 = p3;
+ 288              		.loc 1 107 0
+ 289 00b4 CC30D8E5 		ldrb	r3, [r8, #204]	@ zero_extendqisi2
+ 290 00b8 9BA32AE0 		mla	sl, fp, r3, sl
+ 291 00bc 00209DE5 		ldr	r2, [sp, #0]
+ 292 00c0 0AA085E0 		add	sl, r5, sl
+ 293 00c4 B227CAE1 		strh	r2, [sl, #114]	@ movhi
+ 108:layer1/tdma_sched.c **** 		bucket->num_items++;
+ 294              		.loc 1 108 0
+ 295 00c8 CC30D8E5 		ldrb	r3, [r8, #204]	@ zero_extendqisi2
+ 296 00cc 013083E2 		add	r3, r3, #1
+ 297 00d0 CC30C8E5 		strb	r3, [r8, #204]
+ 298              	.LVL26:
+ 299              	.L10:
+ 300 00d4 0C6086E2 		add	r6, r6, #12
+ 301              	.LVL27:
+ 302              	.LBE35:
+ 109:layer1/tdma_sched.c **** 	}
+ 303              		.loc 1 109 0
+ 304 00d8 D6FFFFEA 		b	.L12
+ 305              	.LVL28:
+ 306              	.L8:
+ 110:layer1/tdma_sched.c **** 
+ 111:layer1/tdma_sched.c **** 	return j;
+ 112:layer1/tdma_sched.c **** }
+ 307              		.loc 1 112 0
+ 308 00dc 0400A0E1 		mov	r0, r4
+ 309 00e0 F88FBDE8 		ldmfd	sp!, {r3, r4, r5, r6, r7, r8, r9, sl, fp, pc}
+ 310              	.L15:
+ 311              		.align	2
+ 312              	.L14:
+ 313 00e4 00000000 		.word	l1s
+ 314 00e8 00000000 		.word	tdma_end_set
+ 315 00ec 00000000 		.word	.LC0
+ 316              		.cfi_endproc
+ 317              	.LFE20:
+ 319              		.section	.text.tdma_sched_advance,"ax",%progbits
+ 320              		.align	2
+ 321              		.global	tdma_sched_advance
+ 323              	tdma_sched_advance:
+ 324              	.LFB21:
+ 113:layer1/tdma_sched.c **** 
+ 114:layer1/tdma_sched.c **** /* Advance TDMA scheduler to the next bucket */
+ 115:layer1/tdma_sched.c **** void tdma_sched_advance(void)
+ 116:layer1/tdma_sched.c **** {
+ 325              		.loc 1 116 0
+ 326              		.cfi_startproc
+ 327              		@ args = 0, pretend = 0, frame = 0
+ 328              		@ frame_needed = 0, uses_anonymous_args = 0
+ 329              	.LVL29:
+ 330 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 331              	.LCFI2:
+ 332              		.cfi_def_cfa_offset 8
+ 117:layer1/tdma_sched.c **** 	struct tdma_scheduler *sched = &l1s.tdma_sched;
+ 118:layer1/tdma_sched.c **** 	uint8_t next_bucket;
+ 119:layer1/tdma_sched.c **** 
+ 120:layer1/tdma_sched.c **** 	/* advance to the next bucket */
+ 121:layer1/tdma_sched.c **** 	next_bucket = wrap_bucket(1);
+ 122:layer1/tdma_sched.c **** 	sched->cur_bucket = next_bucket;
+ 333              		.loc 1 122 0
+ 334 0004 14409FE5 		ldr	r4, .L17
+ 335              		.cfi_offset 14, -4
+ 336              		.cfi_offset 4, -8
+ 337              	.LBB42:
+ 338              	.LBB43:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+ 339              		.loc 1 47 0
+ 340 0008 300AD4E5 		ldrb	r0, [r4, #2608]	@ zero_extendqisi2
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+ 341              		.loc 1 48 0
+ 342 000c 1910A0E3 		mov	r1, #25
+ 343 0010 010080E2 		add	r0, r0, #1
+ 344 0014 FEFFFFEB 		bl	__umodsi3
+  50:layer1/tdma_sched.c **** 	return bucket;
+ 345              		.loc 1 50 0
+ 346 0018 300AC4E5 		strb	r0, [r4, #2608]
+ 347              	.LBE43:
+ 348              	.LBE42:
+ 123:layer1/tdma_sched.c **** }
+ 349              		.loc 1 123 0
+ 350 001c 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 351              	.L18:
+ 352              		.align	2
+ 353              	.L17:
+ 354 0020 00000000 		.word	l1s
+ 355              		.cfi_endproc
+ 356              	.LFE21:
+ 358              		.section	.text.tdma_sched_flag_scan,"ax",%progbits
+ 359              		.align	2
+ 360              		.global	tdma_sched_flag_scan
+ 362              	tdma_sched_flag_scan:
+ 363              	.LFB22:
+ 124:layer1/tdma_sched.c **** 
+ 125:layer1/tdma_sched.c **** /* Scan current frame scheduled items for flags */
+ 126:layer1/tdma_sched.c **** uint16_t tdma_sched_flag_scan(void)
+ 127:layer1/tdma_sched.c **** {
+ 364              		.loc 1 127 0
+ 365              		.cfi_startproc
+ 366              		@ args = 0, pretend = 0, frame = 0
+ 367              		@ frame_needed = 0, uses_anonymous_args = 0
+ 368              		@ link register save eliminated.
+ 369              	.LVL30:
+ 128:layer1/tdma_sched.c **** 	struct tdma_scheduler *sched = &l1s.tdma_sched;
+ 129:layer1/tdma_sched.c **** 	struct tdma_sched_bucket *bucket;
+ 130:layer1/tdma_sched.c **** 	int i;
+ 131:layer1/tdma_sched.c **** 	uint16_t flags = 0;
+ 132:layer1/tdma_sched.c **** 
+ 133:layer1/tdma_sched.c **** 	/* determine current bucket */
+ 134:layer1/tdma_sched.c **** 	bucket = &sched->bucket[sched->cur_bucket];
+ 370              		.loc 1 134 0
+ 371 0000 40309FE5 		ldr	r3, .L22
+ 372 0004 302AD3E5 		ldrb	r2, [r3, #2608]	@ zero_extendqisi2
+ 373              	.LVL31:
+ 135:layer1/tdma_sched.c **** 
+ 136:layer1/tdma_sched.c **** 	/* iterate over items in this bucket and call callback function */
+ 137:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++) {
+ 374              		.loc 1 137 0
+ 375 0008 6410A0E3 		mov	r1, #100
+ 376 000c 910202E0 		mul	r2, r1, r2
+ 377              	.LVL32:
+ 131:layer1/tdma_sched.c **** 	uint16_t flags = 0;
+ 378              		.loc 1 131 0
+ 379 0010 0000A0E3 		mov	r0, #0
+ 380              		.loc 1 137 0
+ 381 0014 021083E0 		add	r1, r3, r2
+ 126:layer1/tdma_sched.c **** uint16_t tdma_sched_flag_scan(void)
+ 382              		.loc 1 126 0
+ 383 0018 022083E0 		add	r2, r3, r2
+ 384              		.loc 1 137 0
+ 385 001c CC10D1E5 		ldrb	r1, [r1, #204]	@ zero_extendqisi2
+ 126:layer1/tdma_sched.c **** uint16_t tdma_sched_flag_scan(void)
+ 386              		.loc 1 126 0
+ 387 0020 762082E2 		add	r2, r2, #118
+ 388              		.loc 1 137 0
+ 389 0024 0030A0E1 		mov	r3, r0
+ 390 0028 020000EA 		b	.L20
+ 391              	.LVL33:
+ 392              	.L21:
+ 393              	.LBB44:
+ 138:layer1/tdma_sched.c **** 		struct tdma_sched_item *item = &bucket->item[i];
+ 139:layer1/tdma_sched.c **** 		flags |= item->flags;
+ 394              		.loc 1 139 0 discriminator 2
+ 395 002c BCC052E1 		ldrh	ip, [r2, #-12]
+ 396              	.LBE44:
+ 137:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++) {
+ 397              		.loc 1 137 0 discriminator 2
+ 398 0030 013083E2 		add	r3, r3, #1
+ 399              	.LVL34:
+ 400              	.LBB45:
+ 401              		.loc 1 139 0 discriminator 2
+ 402 0034 0C0080E1 		orr	r0, r0, ip
+ 403              	.LVL35:
+ 404              	.L20:
+ 405              	.LBE45:
+ 137:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++) {
+ 406              		.loc 1 137 0 discriminator 1
+ 407 0038 010053E1 		cmp	r3, r1
+ 408 003c 0C2082E2 		add	r2, r2, #12
+ 409 0040 F9FFFFBA 		blt	.L21
+ 140:layer1/tdma_sched.c **** 	}
+ 141:layer1/tdma_sched.c **** 
+ 142:layer1/tdma_sched.c **** 	return flags;
+ 143:layer1/tdma_sched.c **** }
+ 410              		.loc 1 143 0
+ 411 0044 1EFF2FE1 		bx	lr
+ 412              	.L23:
+ 413              		.align	2
+ 414              	.L22:
+ 415 0048 00000000 		.word	l1s
+ 416              		.cfi_endproc
+ 417              	.LFE22:
+ 419              		.section	.text.tdma_sched_execute,"ax",%progbits
+ 420              		.align	2
+ 421              		.global	tdma_sched_execute
+ 423              	tdma_sched_execute:
+ 424              	.LFB24:
+ 144:layer1/tdma_sched.c **** 
+ 145:layer1/tdma_sched.c **** /* Sort a bucket entries by priority */
+ 146:layer1/tdma_sched.c **** static void _tdma_sched_bucket_sort(struct tdma_sched_bucket *bucket, int *seq)
+ 147:layer1/tdma_sched.c **** {
+ 148:layer1/tdma_sched.c **** 	int i, j, k;
+ 149:layer1/tdma_sched.c **** 	struct tdma_sched_item *item_i, *item_j;
+ 150:layer1/tdma_sched.c **** 
+ 151:layer1/tdma_sched.c **** 	/* initial sequence */
+ 152:layer1/tdma_sched.c **** 		/* we need all the items because some call back may schedule
+ 153:layer1/tdma_sched.c **** 		 * new call backs 'on the fly' */
+ 154:layer1/tdma_sched.c **** 	for (i=0; i<TDMASCHED_NUM_CB; i++)
+ 155:layer1/tdma_sched.c **** 		seq[i] = i;
+ 156:layer1/tdma_sched.c **** 
+ 157:layer1/tdma_sched.c **** 	/* iterate over items in this bucket and sort them */
+ 158:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++)
+ 159:layer1/tdma_sched.c **** 	{
+ 160:layer1/tdma_sched.c **** 		item_i = &bucket->item[seq[i]];
+ 161:layer1/tdma_sched.c **** 
+ 162:layer1/tdma_sched.c **** 		for (j=i+1; j<bucket->num_items; j++)
+ 163:layer1/tdma_sched.c **** 		{
+ 164:layer1/tdma_sched.c **** 			item_j = &bucket->item[seq[j]];
+ 165:layer1/tdma_sched.c **** 
+ 166:layer1/tdma_sched.c **** 			if (item_i->prio > item_j->prio)
+ 167:layer1/tdma_sched.c **** 			{
+ 168:layer1/tdma_sched.c **** 				item_i = item_j;
+ 169:layer1/tdma_sched.c **** 				k      = seq[i];
+ 170:layer1/tdma_sched.c **** 				seq[i] = seq[j];
+ 171:layer1/tdma_sched.c **** 				seq[j] = k;
+ 172:layer1/tdma_sched.c **** 			}
+ 173:layer1/tdma_sched.c **** 		}
+ 174:layer1/tdma_sched.c **** 	}
+ 175:layer1/tdma_sched.c **** }
+ 176:layer1/tdma_sched.c **** 
+ 177:layer1/tdma_sched.c **** /* Execute pre-scheduled events for current frame */
+ 178:layer1/tdma_sched.c **** int tdma_sched_execute(void)
+ 179:layer1/tdma_sched.c **** {
+ 425              		.loc 1 179 0
+ 426              		.cfi_startproc
+ 427              		@ args = 0, pretend = 0, frame = 36
+ 428              		@ frame_needed = 0, uses_anonymous_args = 0
+ 429              	.LVL36:
+ 430 0000 F04F2DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
+ 431              	.LCFI3:
+ 432              		.cfi_def_cfa_offset 36
+ 180:layer1/tdma_sched.c **** 	struct tdma_scheduler *sched = &l1s.tdma_sched;
+ 181:layer1/tdma_sched.c **** 	struct tdma_sched_bucket *bucket;
+ 182:layer1/tdma_sched.c **** 	int i, num_events = 0;
+ 183:layer1/tdma_sched.c **** 	int seq[TDMASCHED_NUM_CB];
+ 184:layer1/tdma_sched.c **** 
+ 185:layer1/tdma_sched.c **** 	/* determine current bucket */
+ 186:layer1/tdma_sched.c **** 	bucket = &sched->bucket[sched->cur_bucket];
+ 433              		.loc 1 186 0
+ 434 0004 5C019FE5 		ldr	r0, .L37
+ 435 0008 30CAD0E5 		ldrb	ip, [r0, #2608]	@ zero_extendqisi2
+ 436              	.LVL37:
+ 437              	.LBB46:
+ 438              	.LBB48:
+ 158:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++)
+ 439              		.loc 1 158 0
+ 440 000c 6450A0E3 		mov	r5, #100
+ 441              		.cfi_offset 14, -4
+ 442              		.cfi_offset 11, -8
+ 443              		.cfi_offset 10, -12
+ 444              		.cfi_offset 9, -16
+ 445              		.cfi_offset 8, -20
+ 446              		.cfi_offset 7, -24
+ 447              		.cfi_offset 6, -28
+ 448              		.cfi_offset 5, -32
+ 449              		.cfi_offset 4, -36
+ 450 0010 9C0505E0 		mul	r5, ip, r5
+ 451              	.LBE48:
+ 452              	.LBE46:
+ 179:layer1/tdma_sched.c **** {
+ 453              		.loc 1 179 0
+ 454 0014 24D04DE2 		sub	sp, sp, #36
+ 455              	.LCFI4:
+ 456              		.cfi_def_cfa_offset 72
+ 457              	.LVL38:
+ 458              	.LBB50:
+ 459              	.LBB47:
+ 155:layer1/tdma_sched.c **** 		seq[i] = i;
+ 460              		.loc 1 155 0
+ 461 0018 0130A0E3 		mov	r3, #1
+ 462 001c 08308DE5 		str	r3, [sp, #8]
+ 463 0020 033083E0 		add	r3, r3, r3
+ 464 0024 0C308DE5 		str	r3, [sp, #12]
+ 465 0028 013083E2 		add	r3, r3, #1
+ 466 002c 10308DE5 		str	r3, [sp, #16]
+ 467 0030 013083E2 		add	r3, r3, #1
+ 468 0034 14308DE5 		str	r3, [sp, #20]
+ 469 0038 013083E2 		add	r3, r3, #1
+ 470 003c 18308DE5 		str	r3, [sp, #24]
+ 471 0040 013083E2 		add	r3, r3, #1
+ 472 0044 1C308DE5 		str	r3, [sp, #28]
+ 473 0048 013083E2 		add	r3, r3, #1
+ 474 004c 20308DE5 		str	r3, [sp, #32]
+ 158:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++)
+ 475              		.loc 1 158 0
+ 476 0050 053080E0 		add	r3, r0, r5
+ 477 0054 CC40D3E5 		ldrb	r4, [r3, #204]	@ zero_extendqisi2
+ 478 0058 04308DE2 		add	r3, sp, #4
+ 155:layer1/tdma_sched.c **** 		seq[i] = i;
+ 479              		.loc 1 155 0
+ 480 005c 0020A0E3 		mov	r2, #0
+ 178:layer1/tdma_sched.c **** int tdma_sched_execute(void)
+ 481              		.loc 1 178 0
+ 482 0060 041183E0 		add	r1, r3, r4, asl #2
+ 155:layer1/tdma_sched.c **** 		seq[i] = i;
+ 483              		.loc 1 155 0
+ 484 0064 04208DE5 		str	r2, [sp, #4]
+ 485              	.LVL39:
+ 160:layer1/tdma_sched.c **** 		item_i = &bucket->item[seq[i]];
+ 486              		.loc 1 160 0
+ 487 0068 0C60A0E3 		mov	r6, #12
+ 178:layer1/tdma_sched.c **** int tdma_sched_execute(void)
+ 488              		.loc 1 178 0
+ 489 006c 00108DE5 		str	r1, [sp, #0]
+ 490 0070 150000EA 		b	.L25
+ 491              	.LVL40:
+ 492              	.L29:
+ 160:layer1/tdma_sched.c **** 		item_i = &bucket->item[seq[i]];
+ 493              		.loc 1 160 0
+ 494 0074 047093E4 		ldr	r7, [r3], #4
+ 495 0078 965727E0 		mla	r7, r6, r7, r5
+ 162:layer1/tdma_sched.c **** 		for (j=i+1; j<bucket->num_items; j++)
+ 496              		.loc 1 162 0
+ 497 007c 012082E2 		add	r2, r2, #1
+ 498              	.LVL41:
+ 160:layer1/tdma_sched.c **** 		item_i = &bucket->item[seq[i]];
+ 499              		.loc 1 160 0
+ 500 0080 6C7087E2 		add	r7, r7, #108
+ 178:layer1/tdma_sched.c **** int tdma_sched_execute(void)
+ 501              		.loc 1 178 0
+ 502 0084 04808DE2 		add	r8, sp, #4
+ 160:layer1/tdma_sched.c **** 		item_i = &bucket->item[seq[i]];
+ 503              		.loc 1 160 0
+ 504 0088 007087E0 		add	r7, r7, r0
+ 505              	.LVL42:
+ 178:layer1/tdma_sched.c **** int tdma_sched_execute(void)
+ 506              		.loc 1 178 0
+ 507 008c 021188E0 		add	r1, r8, r2, asl #2
+ 508 0090 0A0000EA 		b	.L36
+ 509              	.LVL43:
+ 510              	.L28:
+ 164:layer1/tdma_sched.c **** 			item_j = &bucket->item[seq[j]];
+ 511              		.loc 1 164 0
+ 512 0094 048091E4 		ldr	r8, [r1], #4
+ 166:layer1/tdma_sched.c **** 			if (item_i->prio > item_j->prio)
+ 513              		.loc 1 166 0
+ 514 0098 96582AE0 		mla	sl, r6, r8, r5
+ 515 009c 0A9080E0 		add	r9, r0, sl
+ 516 00a0 F8B0D7E1 		ldrsh	fp, [r7, #8]
+ 517 00a4 F497D9E1 		ldrsh	r9, [r9, #116]
+ 518 00a8 09005BE1 		cmp	fp, r9
+ 164:layer1/tdma_sched.c **** 			item_j = &bucket->item[seq[j]];
+ 519              		.loc 1 164 0
+ 520 00ac 6CA08AC2 		addgt	sl, sl, #108
+ 521 00b0 00708AC0 		addgt	r7, sl, r0
+ 522              	.LVL44:
+ 169:layer1/tdma_sched.c **** 				k      = seq[i];
+ 523              		.loc 1 169 0
+ 524 00b4 04A013C5 		ldrgt	sl, [r3, #-4]
+ 525              	.LVL45:
+ 170:layer1/tdma_sched.c **** 				seq[i] = seq[j];
+ 526              		.loc 1 170 0
+ 527 00b8 048003C5 		strgt	r8, [r3, #-4]
+ 528              	.LVL46:
+ 171:layer1/tdma_sched.c **** 				seq[j] = k;
+ 529              		.loc 1 171 0
+ 530 00bc 04A001C5 		strgt	sl, [r1, #-4]
+ 531              	.LVL47:
+ 532              	.L36:
+ 162:layer1/tdma_sched.c **** 		for (j=i+1; j<bucket->num_items; j++)
+ 533              		.loc 1 162 0
+ 534 00c0 00809DE5 		ldr	r8, [sp, #0]
+ 535 00c4 080051E1 		cmp	r1, r8
+ 536 00c8 F1FFFF1A 		bne	.L28
+ 537              	.LVL48:
+ 538              	.L25:
+ 158:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++)
+ 539              		.loc 1 158 0
+ 540 00cc 040052E1 		cmp	r2, r4
+ 541 00d0 E7FFFFBA 		blt	.L29
+ 542              	.LBE47:
+ 543              	.LBE50:
+ 187:layer1/tdma_sched.c **** 
+ 188:layer1/tdma_sched.c **** 	/* get sequence in priority order */
+ 189:layer1/tdma_sched.c **** 	_tdma_sched_bucket_sort(bucket, seq);
+ 190:layer1/tdma_sched.c **** 
+ 191:layer1/tdma_sched.c **** 	/* iterate over items in this bucket and call callback function */
+ 192:layer1/tdma_sched.c **** 	for (i = 0; i < bucket->num_items; i++) {
+ 544              		.loc 1 192 0
+ 545 00d4 6470A0E3 		mov	r7, #100
+ 546 00d8 9C0707E0 		mul	r7, ip, r7
+ 547 00dc 84809FE5 		ldr	r8, .L37
+ 548              	.LBB51:
+ 549              	.LBB49:
+ 158:layer1/tdma_sched.c **** 	for (i=0; i<bucket->num_items; i++)
+ 550              		.loc 1 158 0
+ 551 00e0 0DA0A0E1 		mov	sl, sp
+ 552 00e4 0050A0E3 		mov	r5, #0
+ 553              	.LBE49:
+ 554              	.LBE51:
+ 555              		.loc 1 192 0
+ 556 00e8 076088E0 		add	r6, r8, r7
+ 557              	.LBB52:
+ 193:layer1/tdma_sched.c **** 		struct tdma_sched_item *item = &bucket->item[seq[i]];
+ 194:layer1/tdma_sched.c **** 		int rc;
+ 195:layer1/tdma_sched.c **** 
+ 196:layer1/tdma_sched.c **** 		num_events++;
+ 197:layer1/tdma_sched.c **** 
+ 198:layer1/tdma_sched.c **** 		rc = item->cb(item->p1, item->p2, item->p3);
+ 558              		.loc 1 198 0
+ 559 00ec 0C90A0E3 		mov	r9, #12
+ 560 00f0 120000EA 		b	.L30
+ 561              	.LVL49:
+ 562              	.L33:
+ 193:layer1/tdma_sched.c **** 		struct tdma_sched_item *item = &bucket->item[seq[i]];
+ 563              		.loc 1 193 0
+ 564 00f4 0430BAE5 		ldr	r3, [sl, #4]!
+ 565              	.LVL50:
+ 566              		.loc 1 198 0
+ 567 00f8 997323E0 		mla	r3, r9, r3, r7
+ 568 00fc 033088E0 		add	r3, r8, r3
+ 569 0100 702083E2 		add	r2, r3, #112
+ 570 0104 0110D2E5 		ldrb	r1, [r2, #1]	@ zero_extendqisi2
+ 571 0108 7000D3E5 		ldrb	r0, [r3, #112]	@ zero_extendqisi2
+ 572 010c B220D2E1 		ldrh	r2, [r2, #2]
+ 573 0110 0FE0A0E1 		mov	lr, pc
+ 574 0114 6CF093E5 		ldr	pc, [r3, #108]
+ 575              	.LVL51:
+ 199:layer1/tdma_sched.c **** 		if (rc < 0) {
+ 576              		.loc 1 199 0
+ 577 0118 004050E2 		subs	r4, r0, #0
+ 578 011c 060000AA 		bge	.L31
+ 579              	.LVL52:
+ 200:layer1/tdma_sched.c **** 			printf("Error %d during processing of item %u of bucket %u\n",
+ 580              		.loc 1 200 0
+ 581 0120 40309FE5 		ldr	r3, .L37
+ 582 0124 0410A0E1 		mov	r1, r4
+ 583 0128 0520A0E1 		mov	r2, r5
+ 584 012c 303AD3E5 		ldrb	r3, [r3, #2608]	@ zero_extendqisi2
+ 585 0130 34009FE5 		ldr	r0, .L37+4
+ 586              	.LVL53:
+ 587 0134 FEFFFFEB 		bl	printf
+ 588              	.LVL54:
+ 201:layer1/tdma_sched.c **** 				rc, i, sched->cur_bucket);
+ 202:layer1/tdma_sched.c **** 			return rc;
+ 589              		.loc 1 202 0
+ 590 0138 070000EA 		b	.L32
+ 591              	.L31:
+ 592              	.LVL55:
+ 593              	.LBE52:
+ 192:layer1/tdma_sched.c **** 	for (i = 0; i < bucket->num_items; i++) {
+ 594              		.loc 1 192 0
+ 595 013c 015085E2 		add	r5, r5, #1
+ 596              	.LVL56:
+ 597              	.L30:
+ 192:layer1/tdma_sched.c **** 	for (i = 0; i < bucket->num_items; i++) {
+ 598              		.loc 1 192 0 is_stmt 0 discriminator 1
+ 599 0140 CC20D6E5 		ldrb	r2, [r6, #204]	@ zero_extendqisi2
+ 600 0144 020055E1 		cmp	r5, r2
+ 601 0148 CC3086E2 		add	r3, r6, #204
+ 602 014c E8FFFFBA 		blt	.L33
+ 203:layer1/tdma_sched.c **** 		}
+ 204:layer1/tdma_sched.c **** 		/* if the cb() we just called has scheduled more items for the
+ 205:layer1/tdma_sched.c **** 		 * current TDMA, bucket->num_items will have increased and we
+ 206:layer1/tdma_sched.c **** 		 * will simply continue to execute them as intended. Priorities
+ 207:layer1/tdma_sched.c **** 		 * won't work though ! */
+ 208:layer1/tdma_sched.c **** 	}
+ 209:layer1/tdma_sched.c **** 
+ 210:layer1/tdma_sched.c **** 	/* clear/reset the bucket */
+ 211:layer1/tdma_sched.c **** 	bucket->num_items = 0;
+ 603              		.loc 1 211 0 is_stmt 1
+ 604 0150 0020A0E3 		mov	r2, #0
+ 605 0154 0020C3E5 		strb	r2, [r3, #0]
+ 212:layer1/tdma_sched.c **** 
+ 213:layer1/tdma_sched.c **** 	/* return number of items that we called */
+ 214:layer1/tdma_sched.c **** 	return num_events;
+ 606              		.loc 1 214 0
+ 607 0158 0540A0E1 		mov	r4, r5
+ 608              	.LVL57:
+ 609              	.L32:
+ 215:layer1/tdma_sched.c **** }
+ 610              		.loc 1 215 0
+ 611 015c 0400A0E1 		mov	r0, r4
+ 612 0160 24D08DE2 		add	sp, sp, #36
+ 613 0164 F08FBDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, pc}
+ 614              	.L38:
+ 615              		.align	2
+ 616              	.L37:
+ 617 0168 00000000 		.word	l1s
+ 618 016c 1F000000 		.word	.LC1
+ 619              		.cfi_endproc
+ 620              	.LFE24:
+ 622              		.section	.text.tdma_sched_reset,"ax",%progbits
+ 623              		.align	2
+ 624              		.global	tdma_sched_reset
+ 626              	tdma_sched_reset:
+ 627              	.LFB25:
+ 216:layer1/tdma_sched.c **** 
+ 217:layer1/tdma_sched.c **** void tdma_sched_reset(void)
+ 218:layer1/tdma_sched.c **** {
+ 628              		.loc 1 218 0
+ 629              		.cfi_startproc
+ 630              		@ args = 0, pretend = 0, frame = 0
+ 631              		@ frame_needed = 0, uses_anonymous_args = 0
+ 632              		@ link register save eliminated.
+ 633              	.LVL58:
+ 634              	.LBB53:
+ 219:layer1/tdma_sched.c **** 	struct tdma_scheduler *sched = &l1s.tdma_sched;
+ 220:layer1/tdma_sched.c **** 	unsigned int bucket_nr;
+ 221:layer1/tdma_sched.c **** 
+ 222:layer1/tdma_sched.c **** 	for (bucket_nr = 0; bucket_nr < ARRAY_SIZE(sched->bucket); bucket_nr++) {
+ 223:layer1/tdma_sched.c **** 		struct tdma_sched_bucket *bucket = &sched->bucket[bucket_nr];
+ 224:layer1/tdma_sched.c **** 		/* current bucket will be reset by iteration code above! */
+ 225:layer1/tdma_sched.c **** 		if (bucket_nr != sched->cur_bucket)
+ 635              		.loc 1 225 0
+ 636 0000 24209FE5 		ldr	r2, .L43
+ 222:layer1/tdma_sched.c **** 	for (bucket_nr = 0; bucket_nr < ARRAY_SIZE(sched->bucket); bucket_nr++) {
+ 637              		.loc 1 222 0
+ 638 0004 0030A0E3 		mov	r3, #0
+ 639              		.loc 1 225 0
+ 640 0008 300AD2E5 		ldrb	r0, [r2, #2608]	@ zero_extendqisi2
+ 226:layer1/tdma_sched.c **** 			bucket->num_items = 0;
+ 641              		.loc 1 226 0
+ 642 000c 0310A0E1 		mov	r1, r3
+ 643              	.LVL59:
+ 644              	.L41:
+ 225:layer1/tdma_sched.c **** 		if (bucket_nr != sched->cur_bucket)
+ 645              		.loc 1 225 0
+ 646 0010 000053E1 		cmp	r3, r0
+ 647              	.LBE53:
+ 222:layer1/tdma_sched.c **** 	for (bucket_nr = 0; bucket_nr < ARRAY_SIZE(sched->bucket); bucket_nr++) {
+ 648              		.loc 1 222 0
+ 649 0014 013083E2 		add	r3, r3, #1
+ 650              	.LVL60:
+ 651              	.LBB54:
+ 652              		.loc 1 226 0
+ 653 0018 CC10C215 		strneb	r1, [r2, #204]
+ 654              	.LBE54:
+ 222:layer1/tdma_sched.c **** 	for (bucket_nr = 0; bucket_nr < ARRAY_SIZE(sched->bucket); bucket_nr++) {
+ 655              		.loc 1 222 0
+ 656 001c 190053E3 		cmp	r3, #25
+ 657 0020 642082E2 		add	r2, r2, #100
+ 658 0024 F9FFFF1A 		bne	.L41
+ 227:layer1/tdma_sched.c **** 	}
+ 228:layer1/tdma_sched.c **** 
+ 229:layer1/tdma_sched.c **** 	/* Don't reset cur_bucket, as it would upset the bucket iteration code
+ 230:layer1/tdma_sched.c **** 	 * in tdma_sched_execute() */
+ 231:layer1/tdma_sched.c **** }
+ 659              		.loc 1 231 0
+ 660 0028 1EFF2FE1 		bx	lr
+ 661              	.L44:
+ 662              		.align	2
+ 663              	.L43:
+ 664 002c 00000000 		.word	l1s
+ 665              		.cfi_endproc
+ 666              	.LFE25:
+ 668              		.section	.text.tdma_sched_dump,"ax",%progbits
+ 669              		.align	2
+ 670              		.global	tdma_sched_dump
+ 672              	tdma_sched_dump:
+ 673              	.LFB26:
+ 232:layer1/tdma_sched.c **** 
+ 233:layer1/tdma_sched.c **** void tdma_sched_dump(void)
+ 234:layer1/tdma_sched.c **** {
+ 674              		.loc 1 234 0
+ 675              		.cfi_startproc
+ 676              		@ args = 0, pretend = 0, frame = 0
+ 677              		@ frame_needed = 0, uses_anonymous_args = 0
+ 678 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 679              	.LCFI5:
+ 680              		.cfi_def_cfa_offset 16
+ 235:layer1/tdma_sched.c **** 	unsigned int i;
+ 236:layer1/tdma_sched.c **** 
+ 237:layer1/tdma_sched.c **** 	printf("\n(%2u)", l1s.tdma_sched.cur_bucket);
+ 681              		.loc 1 237 0
+ 682 0004 4C509FE5 		ldr	r5, .L48
+ 683              		.cfi_offset 14, -4
+ 684              		.cfi_offset 6, -8
+ 685              		.cfi_offset 5, -12
+ 686              		.cfi_offset 4, -16
+ 687 0008 4C009FE5 		ldr	r0, .L48+4
+ 688 000c 301AD5E5 		ldrb	r1, [r5, #2608]	@ zero_extendqisi2
+ 689 0010 FEFFFFEB 		bl	printf
+ 690              	.LVL61:
+ 238:layer1/tdma_sched.c **** 	for (i = 0; i < ARRAY_SIZE(l1s.tdma_sched.bucket); i++) {
+ 691              		.loc 1 238 0
+ 692 0014 0040A0E3 		mov	r4, #0
+ 693              	.LBB55:
+ 239:layer1/tdma_sched.c **** 		int bucket_nr = wrap_bucket(i);
+ 240:layer1/tdma_sched.c **** 		struct tdma_sched_bucket *bucket = &l1s.tdma_sched.bucket[bucket_nr];
+ 241:layer1/tdma_sched.c **** 		printf("%u:", bucket->num_items);
+ 694              		.loc 1 241 0
+ 695 0018 6460A0E3 		mov	r6, #100
+ 696              	.LVL62:
+ 697              	.L46:
+ 698              	.LBB56:
+ 699              	.LBB57:
+  47:layer1/tdma_sched.c **** 	bucket = (l1s.tdma_sched.cur_bucket + offset)
+ 700              		.loc 1 47 0 discriminator 2
+ 701 001c 300AD5E5 		ldrb	r0, [r5, #2608]	@ zero_extendqisi2
+  48:layer1/tdma_sched.c **** 					% ARRAY_SIZE(l1s.tdma_sched.bucket);
+ 702              		.loc 1 48 0 discriminator 2
+ 703 0020 1910A0E3 		mov	r1, #25
+ 704 0024 000084E0 		add	r0, r4, r0
+ 705 0028 FEFFFFEB 		bl	__umodsi3
+ 706              	.LBE57:
+ 707              	.LBE56:
+ 239:layer1/tdma_sched.c **** 		int bucket_nr = wrap_bucket(i);
+ 708              		.loc 1 239 0 discriminator 2
+ 709 002c FF3000E2 		and	r3, r0, #255
+ 710              		.loc 1 241 0 discriminator 2
+ 711 0030 965323E0 		mla	r3, r6, r3, r5
+ 712 0034 24009FE5 		ldr	r0, .L48+8
+ 713 0038 CC10D3E5 		ldrb	r1, [r3, #204]	@ zero_extendqisi2
+ 714              	.LBE55:
+ 238:layer1/tdma_sched.c **** 	for (i = 0; i < ARRAY_SIZE(l1s.tdma_sched.bucket); i++) {
+ 715              		.loc 1 238 0 discriminator 2
+ 716 003c 014084E2 		add	r4, r4, #1
+ 717              	.LVL63:
+ 718              	.LBB58:
+ 719              		.loc 1 241 0 discriminator 2
+ 720 0040 FEFFFFEB 		bl	printf
+ 721              	.LVL64:
+ 722              	.LBE58:
+ 238:layer1/tdma_sched.c **** 	for (i = 0; i < ARRAY_SIZE(l1s.tdma_sched.bucket); i++) {
+ 723              		.loc 1 238 0 discriminator 2
+ 724 0044 190054E3 		cmp	r4, #25
+ 725 0048 F3FFFF1A 		bne	.L46
+ 242:layer1/tdma_sched.c **** 	}
+ 243:layer1/tdma_sched.c **** 	putchar('\n');
+ 726              		.loc 1 243 0
+ 727 004c 0A00A0E3 		mov	r0, #10
+ 244:layer1/tdma_sched.c **** }
+ 728              		.loc 1 244 0
+ 729 0050 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 243:layer1/tdma_sched.c **** 	putchar('\n');
+ 730              		.loc 1 243 0
+ 731 0054 FEFFFFEA 		b	sercomm_putchar
+ 732              	.L49:
+ 733              		.align	2
+ 734              	.L48:
+ 735 0058 00000000 		.word	l1s
+ 736 005c 53000000 		.word	.LC2
+ 737 0060 5A000000 		.word	.LC3
+ 738              		.cfi_endproc
+ 739              	.LFE26:
+ 741              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 742              	.LC0:
+ 743 0000 74646D61 		.ascii	"tdma_schedule bucket overflow\012\000"
+ 743      5F736368 
+ 743      6564756C 
+ 743      65206275 
+ 743      636B6574 
+ 744              	.LC1:
+ 745 001f 4572726F 		.ascii	"Error %d during processing of item %u of bucket %u\012"
+ 745      72202564 
+ 745      20647572 
+ 745      696E6720 
+ 745      70726F63 
+ 746 0052 00       		.ascii	"\000"
+ 747              	.LC2:
+ 748 0053 0A282532 		.ascii	"\012(%2u)\000"
+ 748      752900
+ 749              	.LC3:
+ 750 005a 25753A00 		.ascii	"%u:\000"
+ 751              		.text
+ 752              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 tdma_sched.c
+     /tmp/cciYj9tX.s:12     .text.tdma_end_set:0000000000000000 $a
+     /tmp/cciYj9tX.s:15     .text.tdma_end_set:0000000000000000 tdma_end_set
+     /tmp/cciYj9tX.s:33     .text.tdma_schedule:0000000000000000 $a
+     /tmp/cciYj9tX.s:36     .text.tdma_schedule:0000000000000000 tdma_schedule
+     /tmp/cciYj9tX.s:147    .text.tdma_schedule:0000000000000090 $d
+     /tmp/cciYj9tX.s:153    .text.tdma_schedule_set:0000000000000000 $a
+     /tmp/cciYj9tX.s:156    .text.tdma_schedule_set:0000000000000000 tdma_schedule_set
+     /tmp/cciYj9tX.s:313    .text.tdma_schedule_set:00000000000000e4 $d
+     /tmp/cciYj9tX.s:320    .text.tdma_sched_advance:0000000000000000 $a
+     /tmp/cciYj9tX.s:323    .text.tdma_sched_advance:0000000000000000 tdma_sched_advance
+     /tmp/cciYj9tX.s:354    .text.tdma_sched_advance:0000000000000020 $d
+     /tmp/cciYj9tX.s:359    .text.tdma_sched_flag_scan:0000000000000000 $a
+     /tmp/cciYj9tX.s:362    .text.tdma_sched_flag_scan:0000000000000000 tdma_sched_flag_scan
+     /tmp/cciYj9tX.s:415    .text.tdma_sched_flag_scan:0000000000000048 $d
+     /tmp/cciYj9tX.s:420    .text.tdma_sched_execute:0000000000000000 $a
+     /tmp/cciYj9tX.s:423    .text.tdma_sched_execute:0000000000000000 tdma_sched_execute
+     /tmp/cciYj9tX.s:617    .text.tdma_sched_execute:0000000000000168 $d
+     /tmp/cciYj9tX.s:623    .text.tdma_sched_reset:0000000000000000 $a
+     /tmp/cciYj9tX.s:626    .text.tdma_sched_reset:0000000000000000 tdma_sched_reset
+     /tmp/cciYj9tX.s:664    .text.tdma_sched_reset:000000000000002c $d
+     /tmp/cciYj9tX.s:669    .text.tdma_sched_dump:0000000000000000 $a
+     /tmp/cciYj9tX.s:672    .text.tdma_sched_dump:0000000000000000 tdma_sched_dump
+     /tmp/cciYj9tX.s:735    .text.tdma_sched_dump:0000000000000058 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+__umodsi3
+puts
+l1s
+memcpy
+printf
+sercomm_putchar

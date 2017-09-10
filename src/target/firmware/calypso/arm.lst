@@ -1,0 +1,86 @@
+   1              		.file	"arm.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.arm_enable_interrupts,"ax",%progbits
+  12              		.align	2
+  13              		.global	arm_enable_interrupts
+  15              	arm_enable_interrupts:
+  16              	.LFB0:
+  17              		.file 1 "calypso/arm.c"
+   1:calypso/arm.c **** 
+   2:calypso/arm.c **** /* enable IRQ+FIQ interrupts */
+   3:calypso/arm.c **** void arm_enable_interrupts (void)
+   4:calypso/arm.c **** {
+  18              		.loc 1 4 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+   5:calypso/arm.c **** 	unsigned long temp;
+   6:calypso/arm.c **** 	__asm__ __volatile__("mrs %0, cpsr\n"
+  23              		.loc 1 6 0
+  24              	@ 6 "calypso/arm.c" 1
+  25 0000 00300FE1 		mrs r3, cpsr
+  26 0004 C030C3E3 	bic r3, r3, #0xc0
+  27 0008 03F021E1 	msr cpsr_c, r3
+  28              	@ 0 "" 2
+   7:calypso/arm.c **** 			     "bic %0, %0, #0xc0\n"
+   8:calypso/arm.c **** 			     "msr cpsr_c, %0"
+   9:calypso/arm.c **** 			     : "=r" (temp)
+  10:calypso/arm.c **** 			     :
+  11:calypso/arm.c **** 			     : "memory");
+  12:calypso/arm.c **** }
+  29              		.loc 1 12 0
+  30 000c 1EFF2FE1 		bx	lr
+  31              		.cfi_endproc
+  32              	.LFE0:
+  34              		.section	.text.arm_disable_interrupts,"ax",%progbits
+  35              		.align	2
+  36              		.global	arm_disable_interrupts
+  38              	arm_disable_interrupts:
+  39              	.LFB1:
+  13:calypso/arm.c **** 
+  14:calypso/arm.c **** /* disable IRQ/FIQ interrupts
+  15:calypso/arm.c ****  * returns true if interrupts had been enabled before we disabled them */
+  16:calypso/arm.c **** int arm_disable_interrupts(void)
+  17:calypso/arm.c **** {
+  40              		.loc 1 17 0
+  41              		.cfi_startproc
+  42              		@ args = 0, pretend = 0, frame = 0
+  43              		@ frame_needed = 0, uses_anonymous_args = 0
+  44              		@ link register save eliminated.
+  18:calypso/arm.c **** 	unsigned long old,temp;
+  19:calypso/arm.c **** 	__asm__ __volatile__("mrs %0, cpsr\n"
+  45              		.loc 1 19 0
+  46              	@ 19 "calypso/arm.c" 1
+  47 0000 00300FE1 		mrs r3, cpsr
+  48 0004 C02083E3 	orr r2, r3, #0xc0
+  49 0008 02F021E1 	msr cpsr_c, r2
+  50              	@ 0 "" 2
+  51              	.LVL0:
+  20:calypso/arm.c **** 			     "orr %1, %0, #0xc0\n"
+  21:calypso/arm.c **** 			     "msr cpsr_c, %1"
+  22:calypso/arm.c **** 			     : "=r" (old), "=r" (temp)
+  23:calypso/arm.c **** 			     :
+  24:calypso/arm.c **** 			     : "memory");
+  25:calypso/arm.c **** 	return (old & 0x80) == 0;
+  52              		.loc 1 25 0
+  53 000c 800013E3 		tst	r3, #128
+  26:calypso/arm.c **** }
+  54              		.loc 1 26 0
+  55 0010 0000A013 		movne	r0, #0
+  56 0014 0100A003 		moveq	r0, #1
+  57 0018 1EFF2FE1 		bx	lr
+  58              		.cfi_endproc
+  59              	.LFE1:
+  61              		.text
+  62              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 arm.c
+     /tmp/ccAlLUFr.s:12     .text.arm_enable_interrupts:0000000000000000 $a
+     /tmp/ccAlLUFr.s:15     .text.arm_enable_interrupts:0000000000000000 arm_enable_interrupts
+     /tmp/ccAlLUFr.s:35     .text.arm_disable_interrupts:0000000000000000 $a
+     /tmp/ccAlLUFr.s:38     .text.arm_disable_interrupts:0000000000000000 arm_disable_interrupts
+                     .debug_frame:0000000000000010 $d
+
+NO UNDEFINED SYMBOLS

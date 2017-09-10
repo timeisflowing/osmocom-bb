@@ -1,0 +1,194 @@
+   1              		.file	"du.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.calypso_du_init,"ax",%progbits
+  12              		.align	2
+  13              		.global	calypso_du_init
+  15              	calypso_du_init:
+  16              	.LFB0:
+  17              		.file 1 "calypso/du.c"
+   1:calypso/du.c  **** /* Calypso DU (Debug Unit) Driver */
+   2:calypso/du.c  **** 
+   3:calypso/du.c  **** /* (C) 2010 by Ingo Albrecht <prom@berlin.ccc.de>
+   4:calypso/du.c  ****  *
+   5:calypso/du.c  ****  * All Rights Reserved
+   6:calypso/du.c  ****  *
+   7:calypso/du.c  ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/du.c  ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/du.c  ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/du.c  ****  * (at your option) any later version.
+  11:calypso/du.c  ****  *
+  12:calypso/du.c  ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/du.c  ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/du.c  ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/du.c  ****  * GNU General Public License for more details.
+  16:calypso/du.c  ****  *
+  17:calypso/du.c  ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/du.c  ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/du.c  ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/du.c  ****  *
+  21:calypso/du.c  ****  */
+  22:calypso/du.c  **** 
+  23:calypso/du.c  **** #include <memory.h>
+  24:calypso/du.c  **** #include <stdint.h>
+  25:calypso/du.c  **** #include <stdio.h>
+  26:calypso/du.c  **** 
+  27:calypso/du.c  **** #include <calypso/du.h>
+  28:calypso/du.c  **** 
+  29:calypso/du.c  **** #define BASE_ADDR_DU	0x03c00000
+  30:calypso/du.c  **** #define DU_REG(m)	(BASE_ADDR_DU+(m))
+  31:calypso/du.c  **** 
+  32:calypso/du.c  **** void calypso_du_init() {
+  18              		.loc 1 32 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22 0000 04E02DE5 		str	lr, [sp, #-4]!
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 4
+  33:calypso/du.c  **** 	unsigned char c;
+  34:calypso/du.c  **** 	calypso_debugunit(1);
+  25              		.loc 1 34 0
+  26 0004 0100A0E3 		mov	r0, #1
+  27              		.cfi_offset 14, -4
+  28 0008 FEFFFFEB 		bl	calypso_debugunit
+  29              	.LVL0:
+  30 000c 0030A0E3 		mov	r3, #0
+  35:calypso/du.c  **** 	for(c = 0; c < 64; c++) {
+  36:calypso/du.c  **** 		writew(DU_REG(c), 0x00000000);
+  31              		.loc 1 36 0
+  32 0010 0320A0E1 		mov	r2, r3
+  33              	.LVL1:
+  34              	.L2:
+  34:calypso/du.c  **** 	calypso_debugunit(1);
+  35              		.loc 1 34 0 discriminator 2
+  36 0014 0318A0E1 		mov	r1, r3, asl #16
+  37              		.loc 1 36 0 discriminator 2
+  38 0018 013083E2 		add	r3, r3, #1
+  34:calypso/du.c  **** 	calypso_debugunit(1);
+  39              		.loc 1 34 0 discriminator 2
+  40 001c 2118A0E1 		mov	r1, r1, lsr #16
+  35:calypso/du.c  **** 	for(c = 0; c < 64; c++) {
+  41              		.loc 1 35 0 discriminator 2
+  42 0020 400053E3 		cmp	r3, #64
+  43              		.loc 1 36 0 discriminator 2
+  44 0024 B010C2E1 		strh	r1, [r2, #0]	@ movhi
+  35:calypso/du.c  **** 	for(c = 0; c < 64; c++) {
+  45              		.loc 1 35 0 discriminator 2
+  46 0028 F9FFFF1A 		bne	.L2
+  37:calypso/du.c  **** 	}
+  38:calypso/du.c  **** }
+  47              		.loc 1 38 0
+  48 002c 04F09DE4 		ldr	pc, [sp], #4
+  49              		.cfi_endproc
+  50              	.LFE0:
+  52              		.section	.text.calypso_du_stop,"ax",%progbits
+  53              		.align	2
+  54              		.global	calypso_du_stop
+  56              	calypso_du_stop:
+  57              	.LFB1:
+  39:calypso/du.c  **** 
+  40:calypso/du.c  **** void calypso_du_stop() {
+  58              		.loc 1 40 0
+  59              		.cfi_startproc
+  60              		@ args = 0, pretend = 0, frame = 0
+  61              		@ frame_needed = 0, uses_anonymous_args = 0
+  62              		@ link register save eliminated.
+  41:calypso/du.c  **** 	calypso_debugunit(0);
+  63              		.loc 1 41 0
+  64 0000 0000A0E3 		mov	r0, #0
+  42:calypso/du.c  **** }
+  65              		.loc 1 42 0
+  41:calypso/du.c  **** 	calypso_debugunit(0);
+  66              		.loc 1 41 0
+  67 0004 FEFFFFEA 		b	calypso_debugunit
+  68              		.cfi_endproc
+  69              	.LFE1:
+  71              		.section	.text.calypso_du_dump,"ax",%progbits
+  72              		.align	2
+  73              		.global	calypso_du_dump
+  75              	calypso_du_dump:
+  76              	.LFB2:
+  43:calypso/du.c  **** 
+  44:calypso/du.c  **** void calypso_du_dump() {
+  77              		.loc 1 44 0
+  78              		.cfi_startproc
+  79              		@ args = 0, pretend = 0, frame = 0
+  80              		@ frame_needed = 0, uses_anonymous_args = 0
+  81 0000 10402DE9 		stmfd	sp!, {r4, lr}
+  82              	.LCFI1:
+  83              		.cfi_def_cfa_offset 8
+  45:calypso/du.c  **** 	unsigned char c;
+  46:calypso/du.c  **** 	puts("Debug unit traceback:\n");
+  84              		.loc 1 46 0
+  85 0004 28009FE5 		ldr	r0, .L8
+  86              		.cfi_offset 14, -4
+  87              		.cfi_offset 4, -8
+  88 0008 FEFFFFEB 		bl	puts
+  89              	.LVL2:
+  90 000c 0040A0E3 		mov	r4, #0
+  91              	.LVL3:
+  92              	.L6:
+  44:calypso/du.c  **** void calypso_du_dump() {
+  93              		.loc 1 44 0 discriminator 2
+  94 0010 0F3584E2 		add	r3, r4, #62914560
+  95              	.LBB2:
+  47:calypso/du.c  **** 	for(c = 0; c < 64; c++) {
+  48:calypso/du.c  **** 		uint32_t w = readw(DU_REG(c));
+  49:calypso/du.c  **** 		printf("t-%2x: 0x%8x\n", c, (unsigned int)w);
+  96              		.loc 1 49 0 discriminator 2
+  97 0014 0410A0E1 		mov	r1, r4
+  48:calypso/du.c  **** 		uint32_t w = readw(DU_REG(c));
+  98              		.loc 1 48 0 discriminator 2
+  99 0018 B020D3E1 		ldrh	r2, [r3, #0]
+ 100              	.LVL4:
+ 101              		.loc 1 49 0 discriminator 2
+ 102 001c 14009FE5 		ldr	r0, .L8+4
+ 103 0020 014084E2 		add	r4, r4, #1
+ 104 0024 FEFFFFEB 		bl	printf
+ 105              	.LVL5:
+ 106              	.LBE2:
+  47:calypso/du.c  **** 	for(c = 0; c < 64; c++) {
+ 107              		.loc 1 47 0 discriminator 2
+ 108 0028 400054E3 		cmp	r4, #64
+ 109 002c F7FFFF1A 		bne	.L6
+  50:calypso/du.c  **** 	}
+  51:calypso/du.c  **** }
+ 110              		.loc 1 51 0
+ 111 0030 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 112              	.L9:
+ 113              		.align	2
+ 114              	.L8:
+ 115 0034 00000000 		.word	.LC0
+ 116 0038 17000000 		.word	.LC1
+ 117              		.cfi_endproc
+ 118              	.LFE2:
+ 120              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 121              	.LC0:
+ 122 0000 44656275 		.ascii	"Debug unit traceback:\012\000"
+ 122      6720756E 
+ 122      69742074 
+ 122      72616365 
+ 122      6261636B 
+ 123              	.LC1:
+ 124 0017 742D2532 		.ascii	"t-%2x: 0x%8x\012\000"
+ 124      783A2030 
+ 124      78253878 
+ 124      0A00
+ 125              		.text
+ 126              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 du.c
+     /tmp/cc7mf94P.s:12     .text.calypso_du_init:0000000000000000 $a
+     /tmp/cc7mf94P.s:15     .text.calypso_du_init:0000000000000000 calypso_du_init
+     /tmp/cc7mf94P.s:53     .text.calypso_du_stop:0000000000000000 $a
+     /tmp/cc7mf94P.s:56     .text.calypso_du_stop:0000000000000000 calypso_du_stop
+     /tmp/cc7mf94P.s:72     .text.calypso_du_dump:0000000000000000 $a
+     /tmp/cc7mf94P.s:75     .text.calypso_du_dump:0000000000000000 calypso_du_dump
+     /tmp/cc7mf94P.s:115    .text.calypso_du_dump:0000000000000034 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+calypso_debugunit
+puts
+printf

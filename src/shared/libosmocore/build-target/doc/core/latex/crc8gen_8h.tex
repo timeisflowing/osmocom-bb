@@ -1,0 +1,16 @@
+\section{include/osmocom/core/crc8gen.h File Reference}
+\label{crc8gen_8h}\index{include/osmocom/core/crc8gen.\+h@{include/osmocom/core/crc8gen.\+h}}
+\subsection*{Data Structures}
+\begin{DoxyCompactItemize}
+\item 
+struct \textbf{ osmo\+\_\+crc8gen\+\_\+code}
+\begin{DoxyCompactList}\small\item\em structure describing a given C\+RC code of max 8 bits \end{DoxyCompactList}\end{DoxyCompactItemize}
+\subsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+uint8\+\_\+t \textbf{ osmo\+\_\+crc8gen\+\_\+compute\+\_\+bits} (const struct \textbf{ osmo\+\_\+crc8gen\+\_\+code} $\ast$code, const ubit\+\_\+t $\ast$in, int len)
+\begin{DoxyCompactList}\small\item\em Compute the C\+RC value of a given array of hard-\/bits. \end{DoxyCompactList}\item 
+int \textbf{ osmo\+\_\+crc8gen\+\_\+check\+\_\+bits} (const struct \textbf{ osmo\+\_\+crc8gen\+\_\+code} $\ast$code, const ubit\+\_\+t $\ast$in, int len, const ubit\+\_\+t $\ast$crc\+\_\+bits)
+\begin{DoxyCompactList}\small\item\em Checks the C\+RC value of a given array of hard-\/bits. \end{DoxyCompactList}\item 
+void \textbf{ osmo\+\_\+crc8gen\+\_\+set\+\_\+bits} (const struct \textbf{ osmo\+\_\+crc8gen\+\_\+code} $\ast$code, const ubit\+\_\+t $\ast$in, int len, ubit\+\_\+t $\ast$crc\+\_\+bits)
+\begin{DoxyCompactList}\small\item\em Computes and writes the C\+RC value of a given array of bits. \end{DoxyCompactList}\end{DoxyCompactItemize}

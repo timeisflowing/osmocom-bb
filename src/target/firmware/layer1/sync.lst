@@ -1,0 +1,1678 @@
+   1              		.file	"sync.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.l1s_abort_cmd,"ax",%progbits
+  12              		.align	2
+  14              	l1s_abort_cmd:
+  15              	.LFB75:
+  16              		.file 1 "layer1/sync.c"
+   1:layer1/sync.c **** /* Synchronous part of GSM Layer 1 */
+   2:layer1/sync.c **** 
+   3:layer1/sync.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:layer1/sync.c ****  * (C) 2010 by Dieter Spaar <spaar@mirider.augusta.de>
+   5:layer1/sync.c ****  * (C) 2010 by Holger Hans Peter Freyther <zecke@selfish.org>
+   6:layer1/sync.c ****  *
+   7:layer1/sync.c ****  * All Rights Reserved
+   8:layer1/sync.c ****  *
+   9:layer1/sync.c ****  * This program is free software; you can redistribute it and/or modify
+  10:layer1/sync.c ****  * it under the terms of the GNU General Public License as published by
+  11:layer1/sync.c ****  * the Free Software Foundation; either version 2 of the License, or
+  12:layer1/sync.c ****  * (at your option) any later version.
+  13:layer1/sync.c ****  *
+  14:layer1/sync.c ****  * This program is distributed in the hope that it will be useful,
+  15:layer1/sync.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  16:layer1/sync.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  17:layer1/sync.c ****  * GNU General Public License for more details.
+  18:layer1/sync.c ****  *
+  19:layer1/sync.c ****  * You should have received a copy of the GNU General Public License along
+  20:layer1/sync.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  21:layer1/sync.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  22:layer1/sync.c ****  *
+  23:layer1/sync.c ****  */
+  24:layer1/sync.c **** 
+  25:layer1/sync.c **** #include <stdint.h>
+  26:layer1/sync.c **** #include <stdio.h>
+  27:layer1/sync.c **** #include <string.h>
+  28:layer1/sync.c **** #include <stdlib.h>
+  29:layer1/sync.c **** 
+  30:layer1/sync.c **** #include <defines.h>
+  31:layer1/sync.c **** #include <debug.h>
+  32:layer1/sync.c **** #include <memory.h>
+  33:layer1/sync.c **** #include <byteorder.h>
+  34:layer1/sync.c **** #include <asm/system.h>
+  35:layer1/sync.c **** 
+  36:layer1/sync.c **** #include <osmocom/gsm/gsm_utils.h>
+  37:layer1/sync.c **** #include <osmocom/core/msgb.h>
+  38:layer1/sync.c **** #include <calypso/dsp_api.h>
+  39:layer1/sync.c **** #include <calypso/irq.h>
+  40:layer1/sync.c **** #include <calypso/tpu.h>
+  41:layer1/sync.c **** #include <calypso/tsp.h>
+  42:layer1/sync.c **** #include <calypso/dsp.h>
+  43:layer1/sync.c **** #include <calypso/timer.h>
+  44:layer1/sync.c **** #include <comm/sercomm.h>
+  45:layer1/sync.c **** 
+  46:layer1/sync.c **** #include <abb/twl3025.h>
+  47:layer1/sync.c **** 
+  48:layer1/sync.c **** //#define DEBUG_EVERY_TDMA
+  49:layer1/sync.c **** 
+  50:layer1/sync.c **** #include <layer1/sync.h>
+  51:layer1/sync.c **** #include <layer1/afc.h>
+  52:layer1/sync.c **** #include <layer1/agc.h>
+  53:layer1/sync.c **** #include <layer1/apc.h>
+  54:layer1/sync.c **** #include <layer1/tdma_sched.h>
+  55:layer1/sync.c **** #include <layer1/mframe_sched.h>
+  56:layer1/sync.c **** #include <layer1/sched_gsmtime.h>
+  57:layer1/sync.c **** #include <layer1/tpu_window.h>
+  58:layer1/sync.c **** #include <layer1/l23_api.h>
+  59:layer1/sync.c **** 
+  60:layer1/sync.c **** #include <l1ctl_proto.h>
+  61:layer1/sync.c **** 
+  62:layer1/sync.c **** struct l1s_state l1s;
+  63:layer1/sync.c **** 
+  64:layer1/sync.c **** void l1s_time_inc(struct gsm_time *time, uint32_t delta_fn)
+  65:layer1/sync.c **** {
+  66:layer1/sync.c **** 	ADD_MODULO(time->fn, delta_fn, GSM_MAX_FN);
+  67:layer1/sync.c **** 
+  68:layer1/sync.c **** 	if (delta_fn == 1) {
+  69:layer1/sync.c **** 		ADD_MODULO(time->t2, 1, 26);
+  70:layer1/sync.c **** 		ADD_MODULO(time->t3, 1, 51);
+  71:layer1/sync.c **** 
+  72:layer1/sync.c **** 		/* if the new frame number is a multiple of 51 */
+  73:layer1/sync.c **** 		if (time->t3 == 0) {
+  74:layer1/sync.c **** 			ADD_MODULO(time->tc, 1, 8);
+  75:layer1/sync.c **** 
+  76:layer1/sync.c **** 			/* if new FN is multiple of 51 and 26 */
+  77:layer1/sync.c **** 			if (time->t2 == 0)
+  78:layer1/sync.c **** 				ADD_MODULO(time->t1, 1, 2048);
+  79:layer1/sync.c **** 		}
+  80:layer1/sync.c **** 	} else
+  81:layer1/sync.c **** 		gsm_fn2gsmtime(time, time->fn);
+  82:layer1/sync.c **** }
+  83:layer1/sync.c **** 
+  84:layer1/sync.c **** void l1s_time_dump(const struct gsm_time *time)
+  85:layer1/sync.c **** {
+  86:layer1/sync.c **** 	printf("fn=%lu(%u/%2u/%2u)", time->fn, time->t1, time->t2, time->t3);
+  87:layer1/sync.c **** }
+  88:layer1/sync.c **** 
+  89:layer1/sync.c **** /* clip a signed 16bit value at a certain limit */
+  90:layer1/sync.c **** int16_t clip_int16(int16_t angle, int16_t clip_at)
+  91:layer1/sync.c **** {
+  92:layer1/sync.c **** 	if (angle > clip_at)
+  93:layer1/sync.c **** 		angle = clip_at;
+  94:layer1/sync.c **** 	else if (angle < -clip_at)
+  95:layer1/sync.c **** 		angle = -clip_at;
+  96:layer1/sync.c **** 
+  97:layer1/sync.c **** 	return angle;
+  98:layer1/sync.c **** }
+  99:layer1/sync.c **** 
+ 100:layer1/sync.c **** int16_t l1s_snr_int(uint16_t snr)
+ 101:layer1/sync.c **** {
+ 102:layer1/sync.c **** 	return snr >> 10;
+ 103:layer1/sync.c **** }
+ 104:layer1/sync.c **** 
+ 105:layer1/sync.c **** uint16_t l1s_snr_fract(uint16_t snr)
+ 106:layer1/sync.c **** {
+ 107:layer1/sync.c **** 	uint32_t fract = snr & 0x3ff;
+ 108:layer1/sync.c **** 	fract = fract * 1000 / (2 << 10);
+ 109:layer1/sync.c **** 
+ 110:layer1/sync.c **** 	return fract & 0xffff;
+ 111:layer1/sync.c **** }
+ 112:layer1/sync.c **** 
+ 113:layer1/sync.c **** #define AFC_MAX_ANGLE		328	/* 0.01 radian in fx1.15 */
+ 114:layer1/sync.c **** 
+ 115:layer1/sync.c **** /* synchronize the L1S to a new timebase (typically a new cell */
+ 116:layer1/sync.c **** void synchronize_tdma(struct l1_cell_info *cinfo)
+ 117:layer1/sync.c **** {
+ 118:layer1/sync.c **** 	int32_t fn_offset;
+ 119:layer1/sync.c **** 	uint32_t tpu_shift = cinfo->time_alignment;
+ 120:layer1/sync.c **** 
+ 121:layer1/sync.c **** 	/* NB detection only works if the TOA of the SB
+ 122:layer1/sync.c **** 	 * is within 0...8. We have to add 75 to get an SB TOA of 4. */
+ 123:layer1/sync.c **** 	tpu_shift += 75;
+ 124:layer1/sync.c **** 
+ 125:layer1/sync.c **** 	tpu_shift = (l1s.tpu_offset + tpu_shift) % QBITS_PER_TDMA;
+ 126:layer1/sync.c **** 
+ 127:layer1/sync.c **** 	fn_offset = cinfo->fn_offset - 1;
+ 128:layer1/sync.c **** 
+ 129:layer1/sync.c **** 	/* if we're already very close to the end of the TPU frame, the
+ 130:layer1/sync.c **** 	 * next interrupt will basically occur now and we need to
+ 131:layer1/sync.c **** 	 * compensate */
+ 132:layer1/sync.c **** 	if (tpu_shift < SWITCH_TIME)
+ 133:layer1/sync.c **** 		fn_offset++;
+ 134:layer1/sync.c **** 
+ 135:layer1/sync.c **** #if 0 /* probably wrong as we already added "offset" and "shift" above */
+ 136:layer1/sync.c **** 	/* increment the TPU quarter-bit offset */
+ 137:layer1/sync.c **** 	l1s.tpu_offset = (l1s.tpu_offset + tpu_shift) % TPU_RANGE;
+ 138:layer1/sync.c **** #else
+ 139:layer1/sync.c **** 	l1s.tpu_offset = tpu_shift;
+ 140:layer1/sync.c **** #endif
+ 141:layer1/sync.c **** 
+ 142:layer1/sync.c **** 	puts("Synchronize_TDMA\n");
+ 143:layer1/sync.c **** 	/* request the TPU to adjust the SYNCHRO and OFFSET registers */
+ 144:layer1/sync.c **** 	tpu_enq_at(SWITCH_TIME);
+ 145:layer1/sync.c **** 	tpu_enq_sync(l1s.tpu_offset);
+ 146:layer1/sync.c **** #if 0
+ 147:layer1/sync.c **** 	/* FIXME: properly end the TPU window at the emd of l1_sync() */
+ 148:layer1/sync.c **** 	tpu_end_scenario();
+ 149:layer1/sync.c **** #endif
+ 150:layer1/sync.c **** 
+ 151:layer1/sync.c **** 	/* Change the current time to reflect the new value */
+ 152:layer1/sync.c **** 	l1s_time_inc(&l1s.current_time, fn_offset);
+ 153:layer1/sync.c **** 	l1s.next_time = l1s.current_time;
+ 154:layer1/sync.c **** 	l1s_time_inc(&l1s.next_time, 1);
+ 155:layer1/sync.c **** 
+ 156:layer1/sync.c **** 	/* The serving cell now no longer has a frame or bit offset */
+ 157:layer1/sync.c **** 	cinfo->fn_offset = 0;
+ 158:layer1/sync.c **** 	cinfo->time_alignment = 0;
+ 159:layer1/sync.c **** }
+ 160:layer1/sync.c **** 
+ 161:layer1/sync.c **** void l1s_reset_hw(void)
+ 162:layer1/sync.c **** {
+ 163:layer1/sync.c **** 	dsp_api.w_page = 0;
+ 164:layer1/sync.c **** 	dsp_api.r_page = 0;
+ 165:layer1/sync.c **** 	dsp_api.r_page_used = 0;
+ 166:layer1/sync.c **** 	dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+ 167:layer1/sync.c **** 	dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_0;
+ 168:layer1/sync.c **** 	dsp_api.ndb->d_dsp_page = 0;
+ 169:layer1/sync.c **** 
+ 170:layer1/sync.c **** 	/* we have to really reset the TPU, otherwise FB detection
+ 171:layer1/sync.c **** 	 * somtimes returns wrong TOA values. */
+ 172:layer1/sync.c **** 	tpu_reset(1);
+ 173:layer1/sync.c **** 	tpu_reset(0);
+ 174:layer1/sync.c **** 	tpu_rewind();
+ 175:layer1/sync.c **** 	tpu_enq_wait(5); /* really needed ? */
+ 176:layer1/sync.c **** 	tpu_enq_sync(l1s.tpu_offset);
+ 177:layer1/sync.c **** 	tpu_end_scenario();
+ 178:layer1/sync.c **** }
+ 179:layer1/sync.c **** 
+ 180:layer1/sync.c **** /* Lost TDMA interrupt detection.  This works by starting a hardware timer
+ 181:layer1/sync.c ****  * that is clocked by the same master clock source (VCTCXO).  We expect
+ 182:layer1/sync.c ****  * 1875 timer ticks in the duration of a TDMA frame (5000 qbits / 1250 bits) */
+ 183:layer1/sync.c **** 
+ 184:layer1/sync.c **** /* Timer for detecting lost IRQ */
+ 185:layer1/sync.c **** #define TIMER_TICKS_PER_TDMA	1875
+ 186:layer1/sync.c **** #define TIMER_TICK_JITTER	1
+ 187:layer1/sync.c **** 
+ 188:layer1/sync.c **** static int last_timestamp;
+ 189:layer1/sync.c **** 
+ 190:layer1/sync.c **** static inline void check_lost_frame(void)
+ 191:layer1/sync.c **** {
+ 192:layer1/sync.c **** 	int diff, timestamp = hwtimer_read(1);
+ 193:layer1/sync.c **** 
+ 194:layer1/sync.c **** 	if (last_timestamp < timestamp)
+ 195:layer1/sync.c **** 		last_timestamp += (4*TIMER_TICKS_PER_TDMA);
+ 196:layer1/sync.c **** 
+ 197:layer1/sync.c **** 	diff = last_timestamp - timestamp;
+ 198:layer1/sync.c **** 
+ 199:layer1/sync.c **** 	/* allow for a bit of jitter */
+ 200:layer1/sync.c **** 	if (diff < TIMER_TICKS_PER_TDMA - TIMER_TICK_JITTER ||
+ 201:layer1/sync.c **** 	    diff > TIMER_TICKS_PER_TDMA + TIMER_TICK_JITTER)
+ 202:layer1/sync.c **** 		printf("LOST %d!\n", diff);
+ 203:layer1/sync.c **** 
+ 204:layer1/sync.c **** 	last_timestamp = timestamp;
+ 205:layer1/sync.c **** }
+ 206:layer1/sync.c **** 
+ 207:layer1/sync.c **** /* schedule a completion */
+ 208:layer1/sync.c **** void l1s_compl_sched(enum l1_compl c)
+ 209:layer1/sync.c **** {
+ 210:layer1/sync.c **** 	unsigned long flags;
+ 211:layer1/sync.c **** 
+ 212:layer1/sync.c **** 	local_firq_save(flags);
+ 213:layer1/sync.c **** 	l1s.scheduled_compl |= (1 << c);
+ 214:layer1/sync.c **** 	local_irq_restore(flags);
+ 215:layer1/sync.c **** }
+ 216:layer1/sync.c **** 
+ 217:layer1/sync.c **** /* main routine for synchronous part of layer 1, called by frame interrupt
+ 218:layer1/sync.c ****  * generated by TPU once every TDMA frame */
+ 219:layer1/sync.c **** static void l1_sync(void)
+ 220:layer1/sync.c **** {
+ 221:layer1/sync.c **** 	uint16_t sched_flags;
+ 222:layer1/sync.c **** 
+ 223:layer1/sync.c **** 	putchart('+');
+ 224:layer1/sync.c **** 
+ 225:layer1/sync.c **** 	check_lost_frame();
+ 226:layer1/sync.c **** 
+ 227:layer1/sync.c **** 	/* Increment Time */
+ 228:layer1/sync.c **** 	l1s.current_time = l1s.next_time;
+ 229:layer1/sync.c **** 	l1s_time_inc(&l1s.next_time, 1);
+ 230:layer1/sync.c **** 	//l1s_time_dump(&l1s.current_time); putchar(' ');
+ 231:layer1/sync.c **** 
+ 232:layer1/sync.c **** 	dsp_api.frame_ctr++;
+ 233:layer1/sync.c **** 	dsp_api.r_page_used = 0;
+ 234:layer1/sync.c **** 
+ 235:layer1/sync.c **** 	/* Update pointers */
+ 236:layer1/sync.c **** 	if (dsp_api.w_page == 0)
+ 237:layer1/sync.c **** 		dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+ 238:layer1/sync.c **** 	else
+ 239:layer1/sync.c **** 		dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_1;
+ 240:layer1/sync.c **** 
+ 241:layer1/sync.c **** 	if (dsp_api.r_page == 0)
+ 242:layer1/sync.c **** 		dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_0;
+ 243:layer1/sync.c **** 	else
+ 244:layer1/sync.c **** 		dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_1;
+ 245:layer1/sync.c **** 
+ 246:layer1/sync.c **** 	/* Reset MCU->DSP page */
+ 247:layer1/sync.c **** 	dsp_api_memset((uint16_t *) dsp_api.db_w, sizeof(*dsp_api.db_w));
+ 248:layer1/sync.c **** 
+ 249:layer1/sync.c **** 	/* Update AFC */
+ 250:layer1/sync.c **** 	afc_load_dsp();
+ 251:layer1/sync.c **** 
+ 252:layer1/sync.c **** 	if (dsp_api.ndb->d_error_status) {
+ 253:layer1/sync.c **** 		printf("DSP Error Status: %u\n", dsp_api.ndb->d_error_status);
+ 254:layer1/sync.c **** 		dsp_api.ndb->d_error_status = 0;
+ 255:layer1/sync.c **** 	}
+ 256:layer1/sync.c **** 
+ 257:layer1/sync.c **** 	/* execute the sched_items that have been scheduled for this
+ 258:layer1/sync.c **** 	 * TDMA frame (including setup/cleanup steps) */
+ 259:layer1/sync.c **** 	sched_flags = tdma_sched_flag_scan();
+ 260:layer1/sync.c **** 
+ 261:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_TPU)
+ 262:layer1/sync.c **** 		l1s_win_init();
+ 263:layer1/sync.c **** 
+ 264:layer1/sync.c **** 	tdma_sched_execute();
+ 265:layer1/sync.c **** 
+ 266:layer1/sync.c **** 	if (dsp_api.r_page_used) {
+ 267:layer1/sync.c **** 		/* clear and switch the read page */
+ 268:layer1/sync.c **** 		dsp_api_memset((uint16_t *) dsp_api.db_r,
+ 269:layer1/sync.c **** 				sizeof(*dsp_api.db_r));
+ 270:layer1/sync.c **** 
+ 271:layer1/sync.c **** 		/* TSM30 does it (really needed ?):
+ 272:layer1/sync.c **** 		 * Set crc result as "SB not found". */
+ 273:layer1/sync.c **** 		dsp_api.db_r->a_sch[0] = (1<<B_SCH_CRC);   /* B_SCH_CRC =1, BLUD =0 */
+ 274:layer1/sync.c **** 
+ 275:layer1/sync.c **** 		dsp_api.r_page ^= 1;
+ 276:layer1/sync.c **** 	}
+ 277:layer1/sync.c **** 
+ 278:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_DSP)
+ 279:layer1/sync.c **** 		dsp_end_scenario();
+ 280:layer1/sync.c **** 
+ 281:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_TPU)
+ 282:layer1/sync.c **** 		tpu_end_scenario();
+ 283:layer1/sync.c **** 
+ 284:layer1/sync.c **** 	/* schedule new / upcoming TDMA items */
+ 285:layer1/sync.c **** 	mframe_schedule();
+ 286:layer1/sync.c **** 	/* schedule new / upcoming one-shot events */
+ 287:layer1/sync.c **** 	sched_gsmtime_execute(l1s.current_time.fn);
+ 288:layer1/sync.c **** 
+ 289:layer1/sync.c **** 	tdma_sched_advance();
+ 290:layer1/sync.c **** }
+ 291:layer1/sync.c **** 
+ 292:layer1/sync.c **** /* ABORT command ********************************************************/
+ 293:layer1/sync.c **** 
+ 294:layer1/sync.c **** static int l1s_abort_cmd(__unused uint8_t p1, __unused uint8_t p2,
+ 295:layer1/sync.c **** 			 __unused uint16_t p3)
+ 296:layer1/sync.c **** {
+  17              		.loc 1 296 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+ 297:layer1/sync.c **** 	putchart('A');
+ 298:layer1/sync.c **** 
+ 299:layer1/sync.c **** 	/* similar to l1s_reset_hw() without touching the TPU */
+ 300:layer1/sync.c **** 
+ 301:layer1/sync.c **** 	dsp_api.w_page = 0;
+ 302:layer1/sync.c **** 	dsp_api.r_page = 0;
+ 303:layer1/sync.c **** 	dsp_api.r_page_used = 0;
+ 304:layer1/sync.c **** 	dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+  23              		.loc 1 304 0
+  24 0000 44309FE5 		ldr	r3, .L2
+ 301:layer1/sync.c **** 	dsp_api.w_page = 0;
+  25              		.loc 1 301 0
+  26 0004 44209FE5 		ldr	r2, .L2+4
+  27              	.LVL1:
+ 305:layer1/sync.c **** 	dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_0;
+  28              		.loc 1 305 0
+  29 0008 44109FE5 		ldr	r1, .L2+8
+  30              	.LVL2:
+ 301:layer1/sync.c **** 	dsp_api.w_page = 0;
+  31              		.loc 1 301 0
+  32 000c 0000A0E3 		mov	r0, #0
+  33              	.LVL3:
+  34 0010 140082E5 		str	r0, [r2, #20]
+ 302:layer1/sync.c **** 	dsp_api.r_page = 0;
+  35              		.loc 1 302 0
+  36 0014 100082E5 		str	r0, [r2, #16]
+ 303:layer1/sync.c **** 	dsp_api.r_page_used = 0;
+  37              		.loc 1 303 0
+  38 0018 180082E5 		str	r0, [r2, #24]
+ 304:layer1/sync.c **** 	dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+  39              		.loc 1 304 0
+  40 001c 0A0082E9 		stmib	r2, {r1, r3}	@ phole stm
+ 306:layer1/sync.c **** 
+ 307:layer1/sync.c **** 	/* Reset task commands. */
+ 308:layer1/sync.c **** 	dsp_api.db_w->d_task_d  = NO_DSP_TASK; /* Init. RX task to NO TASK */
+ 309:layer1/sync.c **** 	dsp_api.db_w->d_task_u  = NO_DSP_TASK; /* Init. TX task to NO TASK */
+ 310:layer1/sync.c **** 	dsp_api.db_w->d_task_ra = NO_DSP_TASK; /* Init. RA task to NO TASK */
+ 311:layer1/sync.c **** 	dsp_api.db_w->d_task_md = NO_DSP_TASK; /* Init. MONITORING task to NO TASK */
+ 312:layer1/sync.c **** 	dsp_api.ndb->d_dsp_page = 0;
+  41              		.loc 1 312 0
+  42 0020 002092E5 		ldr	r2, [r2, #0]
+ 308:layer1/sync.c **** 	dsp_api.db_w->d_task_d  = NO_DSP_TASK; /* Init. RX task to NO TASK */
+  43              		.loc 1 308 0
+  44 0024 B000C3E1 		strh	r0, [r3, #0]	@ movhi
+ 309:layer1/sync.c **** 	dsp_api.db_w->d_task_u  = NO_DSP_TASK; /* Init. TX task to NO TASK */
+  45              		.loc 1 309 0
+  46 0028 B400C3E1 		strh	r0, [r3, #4]	@ movhi
+ 310:layer1/sync.c **** 	dsp_api.db_w->d_task_ra = NO_DSP_TASK; /* Init. RA task to NO TASK */
+  47              		.loc 1 310 0
+  48 002c BE00C3E1 		strh	r0, [r3, #14]	@ movhi
+ 311:layer1/sync.c **** 	dsp_api.db_w->d_task_md = NO_DSP_TASK; /* Init. MONITORING task to NO TASK */
+  49              		.loc 1 311 0
+  50 0030 B800C3E1 		strh	r0, [r3, #8]	@ movhi
+  51              		.loc 1 312 0
+  52 0034 B000C2E1 		strh	r0, [r2, #0]	@ movhi
+ 313:layer1/sync.c **** 
+ 314:layer1/sync.c **** 	/* Set "b_abort" to TRUE, dsp will reset current and pending tasks */
+ 315:layer1/sync.c **** 	dsp_api.db_w->d_ctrl_system |= (1 << B_TASK_ABORT);
+  53              		.loc 1 315 0
+  54 0038 B022D3E1 		ldrh	r2, [r3, #32]
+  55 003c 8228E0E1 		mvn	r2, r2, asl #17
+  56 0040 A228E0E1 		mvn	r2, r2, lsr #17
+  57 0044 B022C3E1 		strh	r2, [r3, #32]	@ movhi
+ 316:layer1/sync.c **** 	return 0;
+ 317:layer1/sync.c **** }
+  58              		.loc 1 317 0
+  59 0048 1EFF2FE1 		bx	lr
+  60              	.L3:
+  61              		.align	2
+  62              	.L2:
+  63 004c 0000D0FF 		.word	-3145728
+  64 0050 00000000 		.word	dsp_api
+  65 0054 5000D0FF 		.word	-3145648
+  66              		.cfi_endproc
+  67              	.LFE75:
+  69              		.section	.text.l1s_time_inc,"ax",%progbits
+  70              		.align	2
+  71              		.global	l1s_time_inc
+  73              	l1s_time_inc:
+  74              	.LFB65:
+  65:layer1/sync.c **** {
+  75              		.loc 1 65 0
+  76              		.cfi_startproc
+  77              		@ args = 0, pretend = 0, frame = 0
+  78              		@ frame_needed = 0, uses_anonymous_args = 0
+  79              		@ link register save eliminated.
+  80              	.LVL4:
+  66:layer1/sync.c **** 	ADD_MODULO(time->fn, delta_fn, GSM_MAX_FN);
+  81              		.loc 1 66 0
+  82 0000 002090E5 		ldr	r2, [r0, #0]
+  83 0004 B4309FE5 		ldr	r3, .L11
+  84 0008 022081E0 		add	r2, r1, r2
+  85 000c 030052E1 		cmp	r2, r3
+  86 0010 AC309F85 		ldrhi	r3, .L11+4
+  87 0014 03308280 		addhi	r3, r2, r3
+  88 0018 002080E5 		str	r2, [r0, #0]
+  89 001c 00308085 		strhi	r3, [r0, #0]
+  68:layer1/sync.c **** 	if (delta_fn == 1) {
+  90              		.loc 1 68 0
+  91 0020 010051E3 		cmp	r1, #1
+  92 0024 2300001A 		bne	.L6
+  69:layer1/sync.c **** 		ADD_MODULO(time->t2, 1, 26);
+  93              		.loc 1 69 0
+  94 0028 0630D0E5 		ldrb	r3, [r0, #6]	@ zero_extendqisi2
+  95 002c 013083E2 		add	r3, r3, #1
+  96 0030 FF3003E2 		and	r3, r3, #255
+  97 0034 190053E3 		cmp	r3, #25
+  98 0038 0630C0E5 		strb	r3, [r0, #6]
+  99 003c 1A304382 		subhi	r3, r3, #26
+ 100 0040 0630C085 		strhib	r3, [r0, #6]
+  70:layer1/sync.c **** 		ADD_MODULO(time->t3, 1, 51);
+ 101              		.loc 1 70 0
+ 102 0044 0730D0E5 		ldrb	r3, [r0, #7]	@ zero_extendqisi2
+ 103 0048 013083E2 		add	r3, r3, #1
+ 104 004c FF3003E2 		and	r3, r3, #255
+ 105 0050 320053E3 		cmp	r3, #50
+ 106 0054 0730C0E5 		strb	r3, [r0, #7]
+ 107 0058 33304382 		subhi	r3, r3, #51
+ 108 005c 0730C085 		strhib	r3, [r0, #7]
+  73:layer1/sync.c **** 		if (time->t3 == 0) {
+ 109              		.loc 1 73 0
+ 110 0060 0730D0E5 		ldrb	r3, [r0, #7]	@ zero_extendqisi2
+ 111 0064 000053E3 		cmp	r3, #0
+ 112 0068 1EFF2F11 		bxne	lr
+  74:layer1/sync.c **** 			ADD_MODULO(time->tc, 1, 8);
+ 113              		.loc 1 74 0
+ 114 006c 0830D0E5 		ldrb	r3, [r0, #8]	@ zero_extendqisi2
+ 115 0070 013083E2 		add	r3, r3, #1
+ 116 0074 FF3003E2 		and	r3, r3, #255
+ 117 0078 070053E3 		cmp	r3, #7
+ 118 007c 0830C0E5 		strb	r3, [r0, #8]
+ 119 0080 08304382 		subhi	r3, r3, #8
+ 120 0084 0830C085 		strhib	r3, [r0, #8]
+  77:layer1/sync.c **** 			if (time->t2 == 0)
+ 121              		.loc 1 77 0
+ 122 0088 0630D0E5 		ldrb	r3, [r0, #6]	@ zero_extendqisi2
+ 123 008c 000053E3 		cmp	r3, #0
+ 124 0090 1EFF2F11 		bxne	lr
+  78:layer1/sync.c **** 				ADD_MODULO(time->t1, 1, 2048);
+ 125              		.loc 1 78 0
+ 126 0094 B430D0E1 		ldrh	r3, [r0, #4]
+ 127 0098 013083E2 		add	r3, r3, #1
+ 128 009c 0338A0E1 		mov	r3, r3, asl #16
+ 129 00a0 2338A0E1 		mov	r3, r3, lsr #16
+ 130 00a4 020B53E3 		cmp	r3, #2048
+ 131 00a8 B430C0E1 		strh	r3, [r0, #4]	@ movhi
+ 132 00ac 023B4322 		subcs	r3, r3, #2048
+ 133 00b0 B430C021 		strcsh	r3, [r0, #4]	@ movhi
+ 134 00b4 1EFF2FE1 		bx	lr
+ 135              	.L6:
+  81:layer1/sync.c **** 		gsm_fn2gsmtime(time, time->fn);
+ 136              		.loc 1 81 0
+ 137 00b8 001090E5 		ldr	r1, [r0, #0]
+ 138              	.LVL5:
+  82:layer1/sync.c **** }
+ 139              		.loc 1 82 0
+  81:layer1/sync.c **** 		gsm_fn2gsmtime(time, time->fn);
+ 140              		.loc 1 81 0
+ 141 00bc FEFFFFEA 		b	gsm_fn2gsmtime
+ 142              	.LVL6:
+ 143              	.L12:
+ 144              		.align	2
+ 145              	.L11:
+ 146 00c0 FF6F2900 		.word	2715647
+ 147 00c4 0090D6FF 		.word	-2715648
+ 148              		.cfi_endproc
+ 149              	.LFE65:
+ 151              		.section	.text.frame_irq,"ax",%progbits
+ 152              		.align	2
+ 154              	frame_irq:
+ 155              	.LFB78:
+ 318:layer1/sync.c **** 
+ 319:layer1/sync.c **** void l1s_dsp_abort(void)
+ 320:layer1/sync.c **** {
+ 321:layer1/sync.c **** 	/* abort right now */
+ 322:layer1/sync.c **** 	tdma_schedule(0, &l1s_abort_cmd, 0, 0, 0, 10);
+ 323:layer1/sync.c **** }
+ 324:layer1/sync.c **** 
+ 325:layer1/sync.c **** void l1s_tx_apc_helper(uint16_t arfcn)
+ 326:layer1/sync.c **** {
+ 327:layer1/sync.c **** 	int16_t auxapc;
+ 328:layer1/sync.c **** 	enum gsm_band band;
+ 329:layer1/sync.c **** 	int i;
+ 330:layer1/sync.c **** 
+ 331:layer1/sync.c **** 	/* Get DAC setting */
+ 332:layer1/sync.c **** 	band = gsm_arfcn2band(arfcn);
+ 333:layer1/sync.c **** 	auxapc = apc_tx_pwrlvl2auxapc(band, l1s.tx_power);
+ 334:layer1/sync.c **** 
+ 335:layer1/sync.c **** 	/* Load the ApcOffset into the DSP */
+ 336:layer1/sync.c **** 	#define  MY_OFFSET	4
+ 337:layer1/sync.c **** 	dsp_api.ndb->d_apcoff = ABB_VAL(APCOFF, (1 << 6) | MY_OFFSET) | 1; /* 2x slope for the GTA-02 ramp
+ 338:layer1/sync.c **** 
+ 339:layer1/sync.c **** 	/* Load the TX Power into the DSP */
+ 340:layer1/sync.c **** 	/*
+ 341:layer1/sync.c **** 	   If the power is too low (below 0 dBm) the ramp is not OK,
+ 342:layer1/sync.c **** 	   especially for GSM-1800. However an MS does not send below
+ 343:layer1/sync.c **** 	   0dBm anyway.
+ 344:layer1/sync.c **** 	*/
+ 345:layer1/sync.c **** 	dsp_api.db_w->d_power_ctl = ABB_VAL(AUXAPC, auxapc);
+ 346:layer1/sync.c **** 
+ 347:layer1/sync.c **** 	/* Update the ramp according to the PCL */
+ 348:layer1/sync.c **** 	for (i = 0; i < 16; i++)
+ 349:layer1/sync.c **** 		dsp_api.ndb->a_ramp[i] = ABB_VAL(APCRAM, twl3025_default_ramp[i]);
+ 350:layer1/sync.c **** 
+ 351:layer1/sync.c **** 	/* The Ramp Table is sent to ABB only once after RF init routine called */
+ 352:layer1/sync.c **** 	dsp_api.db_w->d_ctrl_abb |= (1 << B_RAMP) | (1 << B_BULRAMPDEL);
+ 353:layer1/sync.c **** }
+ 354:layer1/sync.c **** 
+ 355:layer1/sync.c **** /* Interrupt handler */
+ 356:layer1/sync.c **** static void frame_irq(__unused enum irq_nr nr)
+ 357:layer1/sync.c **** {
+ 156              		.loc 1 357 0
+ 157              		.cfi_startproc
+ 158              		@ args = 0, pretend = 0, frame = 0
+ 159              		@ frame_needed = 0, uses_anonymous_args = 0
+ 160              	.LVL7:
+ 161 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 162              	.LCFI0:
+ 163              		.cfi_def_cfa_offset 16
+ 164              	.LBB20:
+ 165              	.LBB21:
+ 166              	.LBB23:
+ 167              	.LBB24:
+ 192:layer1/sync.c **** 	int diff, timestamp = hwtimer_read(1);
+ 168              		.loc 1 192 0
+ 169 0004 0100A0E3 		mov	r0, #1
+ 170              	.LVL8:
+ 171              		.cfi_offset 14, -4
+ 172              		.cfi_offset 6, -8
+ 173              		.cfi_offset 5, -12
+ 174              		.cfi_offset 4, -16
+ 175 0008 FEFFFFEB 		bl	hwtimer_read
+ 194:layer1/sync.c **** 	if (last_timestamp < timestamp)
+ 176              		.loc 1 194 0
+ 177 000c 44319FE5 		ldr	r3, .L27
+ 178 0010 002093E5 		ldr	r2, [r3, #0]
+ 179 0014 000052E1 		cmp	r2, r0
+ 195:layer1/sync.c **** 		last_timestamp += (4*TIMER_TICKS_PER_TDMA);
+ 180              		.loc 1 195 0
+ 181 0018 752D82B2 		addlt	r2, r2, #7488
+ 182 001c 0C2082B2 		addlt	r2, r2, #12
+ 183 0020 002083B5 		strlt	r2, [r3, #0]
+ 197:layer1/sync.c **** 	diff = last_timestamp - timestamp;
+ 184              		.loc 1 197 0
+ 185 0024 2C319FE5 		ldr	r3, .L27
+ 186 0028 001093E5 		ldr	r1, [r3, #0]
+ 187 002c 011060E0 		rsb	r1, r0, r1
+ 200:layer1/sync.c **** 	if (diff < TIMER_TICKS_PER_TDMA - TIMER_TICK_JITTER ||
+ 188              		.loc 1 200 0
+ 189 0030 753E41E2 		sub	r3, r1, #1872
+ 190 0034 023043E2 		sub	r3, r3, #2
+ 191 0038 020053E3 		cmp	r3, #2
+ 192:layer1/sync.c **** 	int diff, timestamp = hwtimer_read(1);
+ 192              		.loc 1 192 0
+ 193 003c 0040A0E1 		mov	r4, r0
+ 194              	.LVL9:
+ 200:layer1/sync.c **** 	if (diff < TIMER_TICKS_PER_TDMA - TIMER_TICK_JITTER ||
+ 195              		.loc 1 200 0
+ 202:layer1/sync.c **** 		printf("LOST %d!\n", diff);
+ 196              		.loc 1 202 0
+ 197 0040 14019F85 		ldrhi	r0, .L27+4
+ 198              	.LVL10:
+ 199 0044 FEFFFF8B 		blhi	printf
+ 200              	.LVL11:
+ 201              	.L15:
+ 204:layer1/sync.c **** 	last_timestamp = timestamp;
+ 202              		.loc 1 204 0
+ 203 0048 08319FE5 		ldr	r3, .L27
+ 204              	.LBE24:
+ 205              	.LBE23:
+ 228:layer1/sync.c **** 	l1s.current_time = l1s.next_time;
+ 206              		.loc 1 228 0
+ 207 004c 0CC19FE5 		ldr	ip, .L27+8
+ 208              	.LBB22:
+ 209              	.LBB25:
+ 204:layer1/sync.c **** 	last_timestamp = timestamp;
+ 210              		.loc 1 204 0
+ 211 0050 004083E5 		str	r4, [r3, #0]
+ 212              	.LBE25:
+ 213              	.LBE22:
+ 228:layer1/sync.c **** 	l1s.current_time = l1s.next_time;
+ 214              		.loc 1 228 0
+ 215 0054 0C308CE2 		add	r3, ip, #12
+ 216 0058 070093E8 		ldmia	r3, {r0, r1, r2}
+ 217 005c 07008CE8 		stmia	ip, {r0, r1, r2}
+ 229:layer1/sync.c **** 	l1s_time_inc(&l1s.next_time, 1);
+ 218              		.loc 1 229 0
+ 219 0060 0300A0E1 		mov	r0, r3
+ 220 0064 0110A0E3 		mov	r1, #1
+ 221 0068 FEFFFFEB 		bl	l1s_time_inc
+ 232:layer1/sync.c **** 	dsp_api.frame_ctr++;
+ 222              		.loc 1 232 0
+ 223 006c F0309FE5 		ldr	r3, .L27+12
+ 224 0070 1C2093E5 		ldr	r2, [r3, #28]
+ 225 0074 012082E2 		add	r2, r2, #1
+ 226 0078 1C2083E5 		str	r2, [r3, #28]
+ 233:layer1/sync.c **** 	dsp_api.r_page_used = 0;
+ 227              		.loc 1 233 0
+ 228 007c 0020A0E3 		mov	r2, #0
+ 229 0080 182083E5 		str	r2, [r3, #24]
+ 236:layer1/sync.c **** 	if (dsp_api.w_page == 0)
+ 230              		.loc 1 236 0
+ 231 0084 142093E5 		ldr	r2, [r3, #20]
+ 232 0088 000052E3 		cmp	r2, #0
+ 239:layer1/sync.c **** 		dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_1;
+ 233              		.loc 1 239 0
+ 234 008c D4209F15 		ldrne	r2, .L27+16
+ 237:layer1/sync.c **** 		dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+ 235              		.loc 1 237 0
+ 236 0090 03264202 		subeq	r2, r2, #3145728
+ 239:layer1/sync.c **** 		dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_1;
+ 237              		.loc 1 239 0
+ 238 0094 082083E5 		str	r2, [r3, #8]
+ 241:layer1/sync.c **** 	if (dsp_api.r_page == 0)
+ 239              		.loc 1 241 0
+ 240 0098 C4309FE5 		ldr	r3, .L27+12
+ 241 009c 102093E5 		ldr	r2, [r3, #16]
+ 242 00a0 000052E3 		cmp	r2, #0
+ 242:layer1/sync.c **** 		dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_0;
+ 243              		.loc 1 242 0
+ 244 00a4 C0209F05 		ldreq	r2, .L27+20
+ 244:layer1/sync.c **** 		dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_1;
+ 245              		.loc 1 244 0
+ 246 00a8 C0209F15 		ldrne	r2, .L27+24
+ 247:layer1/sync.c **** 	dsp_api_memset((uint16_t *) dsp_api.db_w, sizeof(*dsp_api.db_w));
+ 247              		.loc 1 247 0
+ 248 00ac B0409FE5 		ldr	r4, .L27+12
+ 249              	.LVL12:
+ 244:layer1/sync.c **** 		dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_1;
+ 250              		.loc 1 244 0
+ 251 00b0 042083E5 		str	r2, [r3, #4]
+ 247:layer1/sync.c **** 	dsp_api_memset((uint16_t *) dsp_api.db_w, sizeof(*dsp_api.db_w));
+ 252              		.loc 1 247 0
+ 253 00b4 2410A0E3 		mov	r1, #36
+ 254 00b8 080094E5 		ldr	r0, [r4, #8]
+ 255 00bc FEFFFFEB 		bl	dsp_api_memset
+ 250:layer1/sync.c **** 	afc_load_dsp();
+ 256              		.loc 1 250 0
+ 257 00c0 FEFFFFEB 		bl	afc_load_dsp
+ 252:layer1/sync.c **** 	if (dsp_api.ndb->d_error_status) {
+ 258              		.loc 1 252 0
+ 259 00c4 003094E5 		ldr	r3, [r4, #0]
+ 260 00c8 B210D3E1 		ldrh	r1, [r3, #2]
+ 261 00cc 000051E3 		cmp	r1, #0
+ 262 00d0 0400000A 		beq	.L20
+ 253:layer1/sync.c **** 		printf("DSP Error Status: %u\n", dsp_api.ndb->d_error_status);
+ 263              		.loc 1 253 0
+ 264 00d4 98009FE5 		ldr	r0, .L27+28
+ 265 00d8 FEFFFFEB 		bl	printf
+ 254:layer1/sync.c **** 		dsp_api.ndb->d_error_status = 0;
+ 266              		.loc 1 254 0
+ 267 00dc 003094E5 		ldr	r3, [r4, #0]
+ 268 00e0 0020A0E3 		mov	r2, #0	@ movhi
+ 269 00e4 B220C3E1 		strh	r2, [r3, #2]	@ movhi
+ 270              	.L20:
+ 259:layer1/sync.c **** 	sched_flags = tdma_sched_flag_scan();
+ 271              		.loc 1 259 0
+ 272 00e8 FEFFFFEB 		bl	tdma_sched_flag_scan
+ 261:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_TPU)
+ 273              		.loc 1 261 0
+ 274 00ec 016010E2 		ands	r6, r0, #1
+ 259:layer1/sync.c **** 	sched_flags = tdma_sched_flag_scan();
+ 275              		.loc 1 259 0
+ 276 00f0 0050A0E1 		mov	r5, r0
+ 277              	.LVL13:
+ 261:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_TPU)
+ 278              		.loc 1 261 0
+ 262:layer1/sync.c **** 		l1s_win_init();
+ 279              		.loc 1 262 0
+ 280 00f4 FEFFFF1B 		blne	l1s_win_init
+ 281              	.LVL14:
+ 282              	.L21:
+ 266:layer1/sync.c **** 	if (dsp_api.r_page_used) {
+ 283              		.loc 1 266 0
+ 284 00f8 64409FE5 		ldr	r4, .L27+12
+ 264:layer1/sync.c **** 	tdma_sched_execute();
+ 285              		.loc 1 264 0
+ 286 00fc FEFFFFEB 		bl	tdma_sched_execute
+ 266:layer1/sync.c **** 	if (dsp_api.r_page_used) {
+ 287              		.loc 1 266 0
+ 288 0100 183094E5 		ldr	r3, [r4, #24]
+ 289 0104 000053E3 		cmp	r3, #0
+ 290 0108 0800000A 		beq	.L22
+ 268:layer1/sync.c **** 		dsp_api_memset((uint16_t *) dsp_api.db_r,
+ 291              		.loc 1 268 0
+ 292 010c 040094E5 		ldr	r0, [r4, #4]
+ 293 0110 2810A0E3 		mov	r1, #40
+ 294 0114 FEFFFFEB 		bl	dsp_api_memset
+ 273:layer1/sync.c **** 		dsp_api.db_r->a_sch[0] = (1<<B_SCH_CRC);   /* B_SCH_CRC =1, BLUD =0 */
+ 295              		.loc 1 273 0
+ 296 0118 043094E5 		ldr	r3, [r4, #4]
+ 297 011c 012CA0E3 		mov	r2, #256	@ movhi
+ 298 0120 BE21C3E1 		strh	r2, [r3, #30]	@ movhi
+ 275:layer1/sync.c **** 		dsp_api.r_page ^= 1;
+ 299              		.loc 1 275 0
+ 300 0124 103094E5 		ldr	r3, [r4, #16]
+ 301 0128 013023E2 		eor	r3, r3, #1
+ 302 012c 103084E5 		str	r3, [r4, #16]
+ 303              	.L22:
+ 278:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_DSP)
+ 304              		.loc 1 278 0
+ 305 0130 020015E3 		tst	r5, #2
+ 279:layer1/sync.c **** 		dsp_end_scenario();
+ 306              		.loc 1 279 0
+ 307 0134 FEFFFF1B 		blne	dsp_end_scenario
+ 308              	.L23:
+ 281:layer1/sync.c **** 	if (sched_flags & TDMA_IFLG_TPU)
+ 309              		.loc 1 281 0
+ 310 0138 000056E3 		cmp	r6, #0
+ 282:layer1/sync.c **** 		tpu_end_scenario();
+ 311              		.loc 1 282 0
+ 312 013c FEFFFF1B 		blne	tpu_end_scenario
+ 313              	.L24:
+ 285:layer1/sync.c **** 	mframe_schedule();
+ 314              		.loc 1 285 0
+ 315 0140 FEFFFFEB 		bl	mframe_schedule
+ 287:layer1/sync.c **** 	sched_gsmtime_execute(l1s.current_time.fn);
+ 316              		.loc 1 287 0
+ 317 0144 14309FE5 		ldr	r3, .L27+8
+ 318 0148 000093E5 		ldr	r0, [r3, #0]
+ 319 014c FEFFFFEB 		bl	sched_gsmtime_execute
+ 320              	.LBE21:
+ 321              	.LBE20:
+ 358:layer1/sync.c **** 	l1_sync();
+ 359:layer1/sync.c **** }
+ 322              		.loc 1 359 0
+ 323 0150 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 324              	.LBB27:
+ 325              	.LBB26:
+ 289:layer1/sync.c **** 	tdma_sched_advance();
+ 326              		.loc 1 289 0
+ 327 0154 FEFFFFEA 		b	tdma_sched_advance
+ 328              	.L28:
+ 329              		.align	2
+ 330              	.L27:
+ 331 0158 00000000 		.word	.LANCHOR0
+ 332 015c 00000000 		.word	.LC0
+ 333 0160 00000000 		.word	l1s
+ 334 0164 00000000 		.word	dsp_api
+ 335 0168 2800D0FF 		.word	-3145688
+ 336 016c 5000D0FF 		.word	-3145648
+ 337 0170 7800D0FF 		.word	-3145608
+ 338 0174 0A000000 		.word	.LC1
+ 339              	.LBE26:
+ 340              	.LBE27:
+ 341              		.cfi_endproc
+ 342              	.LFE78:
+ 344              		.section	.text.l1s_time_dump,"ax",%progbits
+ 345              		.align	2
+ 346              		.global	l1s_time_dump
+ 348              	l1s_time_dump:
+ 349              	.LFB66:
+  85:layer1/sync.c **** {
+ 350              		.loc 1 85 0
+ 351              		.cfi_startproc
+ 352              		@ args = 0, pretend = 0, frame = 0
+ 353              		@ frame_needed = 0, uses_anonymous_args = 0
+ 354              	.LVL15:
+ 355 0000 01402DE9 		stmfd	sp!, {r0, lr}
+ 356              	.LCFI1:
+ 357              		.cfi_def_cfa_offset 8
+  86:layer1/sync.c **** 	printf("fn=%lu(%u/%2u/%2u)", time->fn, time->t1, time->t2, time->t3);
+ 358              		.loc 1 86 0
+ 359 0004 B420D0E1 		ldrh	r2, [r0, #4]
+ 360 0008 0630D0E5 		ldrb	r3, [r0, #6]	@ zero_extendqisi2
+  85:layer1/sync.c **** {
+ 361              		.loc 1 85 0
+ 362 000c 0010A0E1 		mov	r1, r0
+  86:layer1/sync.c **** 	printf("fn=%lu(%u/%2u/%2u)", time->fn, time->t1, time->t2, time->t3);
+ 363              		.loc 1 86 0
+ 364 0010 0700D0E5 		ldrb	r0, [r0, #7]	@ zero_extendqisi2
+ 365              		.cfi_offset 14, -4
+ 366              		.cfi_offset 0, -8
+ 367              	.LVL16:
+ 368 0014 00008DE5 		str	r0, [sp, #0]
+ 369 0018 08009FE5 		ldr	r0, .L30
+ 370 001c 001091E5 		ldr	r1, [r1, #0]
+ 371              	.LVL17:
+ 372 0020 FEFFFFEB 		bl	printf
+  87:layer1/sync.c **** }
+ 373              		.loc 1 87 0
+ 374 0024 0880BDE8 		ldmfd	sp!, {r3, pc}
+ 375              	.L31:
+ 376              		.align	2
+ 377              	.L30:
+ 378 0028 20000000 		.word	.LC2
+ 379              		.cfi_endproc
+ 380              	.LFE66:
+ 382              		.section	.text.clip_int16,"ax",%progbits
+ 383              		.align	2
+ 384              		.global	clip_int16
+ 386              	clip_int16:
+ 387              	.LFB67:
+  91:layer1/sync.c **** {
+ 388              		.loc 1 91 0
+ 389              		.cfi_startproc
+ 390              		@ args = 0, pretend = 0, frame = 0
+ 391              		@ frame_needed = 0, uses_anonymous_args = 0
+ 392              		@ link register save eliminated.
+ 393              	.LVL18:
+  91:layer1/sync.c **** {
+ 394              		.loc 1 91 0
+ 395 0000 0008A0E1 		mov	r0, r0, asl #16
+ 396              	.LVL19:
+ 397 0004 0118A0E1 		mov	r1, r1, asl #16
+ 398              	.LVL20:
+ 399 0008 4008A0E1 		mov	r0, r0, asr #16
+ 400 000c 4118A0E1 		mov	r1, r1, asr #16
+  92:layer1/sync.c **** 	if (angle > clip_at)
+ 401              		.loc 1 92 0
+ 402 0010 010050E1 		cmp	r0, r1
+ 403 0014 040000CA 		bgt	.L34
+  94:layer1/sync.c **** 	else if (angle < -clip_at)
+ 404              		.loc 1 94 0
+ 405 0018 001061E2 		rsb	r1, r1, #0
+ 406 001c 010050E1 		cmp	r0, r1
+  95:layer1/sync.c **** 		angle = -clip_at;
+ 407              		.loc 1 95 0
+ 408 0020 0118A0B1 		movlt	r1, r1, asl #16
+ 409 0024 4108A0B1 		movlt	r0, r1, asr #16
+ 410              	.LVL21:
+ 411 0028 1EFF2FE1 		bx	lr
+ 412              	.LVL22:
+ 413              	.L34:
+  92:layer1/sync.c **** 	if (angle > clip_at)
+ 414              		.loc 1 92 0
+ 415 002c 0100A0E1 		mov	r0, r1
+ 416              	.LVL23:
+  98:layer1/sync.c **** }
+ 417              		.loc 1 98 0
+ 418 0030 1EFF2FE1 		bx	lr
+ 419              		.cfi_endproc
+ 420              	.LFE67:
+ 422              		.section	.text.l1s_snr_int,"ax",%progbits
+ 423              		.align	2
+ 424              		.global	l1s_snr_int
+ 426              	l1s_snr_int:
+ 427              	.LFB68:
+ 101:layer1/sync.c **** {
+ 428              		.loc 1 101 0
+ 429              		.cfi_startproc
+ 430              		@ args = 0, pretend = 0, frame = 0
+ 431              		@ frame_needed = 0, uses_anonymous_args = 0
+ 432              		@ link register save eliminated.
+ 433              	.LVL24:
+ 101:layer1/sync.c **** {
+ 434              		.loc 1 101 0
+ 435 0000 2005A0E1 		mov	r0, r0, lsr #10
+ 436              	.LVL25:
+ 103:layer1/sync.c **** }
+ 437              		.loc 1 103 0
+ 438 0004 3F0000E2 		and	r0, r0, #63
+ 439 0008 1EFF2FE1 		bx	lr
+ 440              		.cfi_endproc
+ 441              	.LFE68:
+ 443              		.section	.text.l1s_snr_fract,"ax",%progbits
+ 444              		.align	2
+ 445              		.global	l1s_snr_fract
+ 447              	l1s_snr_fract:
+ 448              	.LFB69:
+ 106:layer1/sync.c **** {
+ 449              		.loc 1 106 0
+ 450              		.cfi_startproc
+ 451              		@ args = 0, pretend = 0, frame = 0
+ 452              		@ frame_needed = 0, uses_anonymous_args = 0
+ 453              		@ link register save eliminated.
+ 454              	.LVL26:
+ 107:layer1/sync.c **** 	uint32_t fract = snr & 0x3ff;
+ 455              		.loc 1 107 0
+ 456 0000 000BA0E1 		mov	r0, r0, asl #22
+ 457              	.LVL27:
+ 108:layer1/sync.c **** 	fract = fract * 1000 / (2 << 10);
+ 458              		.loc 1 108 0
+ 459 0004 FA3FA0E3 		mov	r3, #1000
+ 107:layer1/sync.c **** 	uint32_t fract = snr & 0x3ff;
+ 460              		.loc 1 107 0
+ 461 0008 200BA0E1 		mov	r0, r0, lsr #22
+ 462              	.LVL28:
+ 108:layer1/sync.c **** 	fract = fract * 1000 / (2 << 10);
+ 463              		.loc 1 108 0
+ 464 000c 930000E0 		mul	r0, r3, r0
+ 465              	.LVL29:
+ 111:layer1/sync.c **** }
+ 466              		.loc 1 111 0
+ 467 0010 A005A0E1 		mov	r0, r0, lsr #11
+ 468              	.LVL30:
+ 469 0014 1EFF2FE1 		bx	lr
+ 470              		.cfi_endproc
+ 471              	.LFE69:
+ 473              		.global	__umodsi3
+ 474              		.section	.text.synchronize_tdma,"ax",%progbits
+ 475              		.align	2
+ 476              		.global	synchronize_tdma
+ 478              	synchronize_tdma:
+ 479              	.LFB70:
+ 117:layer1/sync.c **** {
+ 480              		.loc 1 117 0
+ 481              		.cfi_startproc
+ 482              		@ args = 0, pretend = 0, frame = 0
+ 483              		@ frame_needed = 0, uses_anonymous_args = 0
+ 484              	.LVL31:
+ 125:layer1/sync.c **** 	tpu_shift = (l1s.tpu_offset + tpu_shift) % QBITS_PER_TDMA;
+ 485              		.loc 1 125 0
+ 486 0000 8C309FE5 		ldr	r3, .L39
+ 117:layer1/sync.c **** {
+ 487              		.loc 1 117 0
+ 488 0004 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 489              	.LCFI2:
+ 490              		.cfi_def_cfa_offset 16
+ 123:layer1/sync.c **** 	tpu_shift += 75;
+ 491              		.loc 1 123 0
+ 492 0008 403A93E5 		ldr	r3, [r3, #2624]
+ 117:layer1/sync.c **** {
+ 493              		.loc 1 117 0
+ 494 000c 0040A0E1 		mov	r4, r0
+ 495              		.cfi_offset 14, -4
+ 496              		.cfi_offset 6, -8
+ 497              		.cfi_offset 5, -12
+ 498              		.cfi_offset 4, -16
+ 119:layer1/sync.c **** 	uint32_t tpu_shift = cinfo->time_alignment;
+ 499              		.loc 1 119 0
+ 500 0010 080090E5 		ldr	r0, [r0, #8]
+ 501              	.LVL32:
+ 123:layer1/sync.c **** 	tpu_shift += 75;
+ 502              		.loc 1 123 0
+ 503 0014 030080E0 		add	r0, r0, r3
+ 125:layer1/sync.c **** 	tpu_shift = (l1s.tpu_offset + tpu_shift) % QBITS_PER_TDMA;
+ 504              		.loc 1 125 0
+ 505 0018 78109FE5 		ldr	r1, .L39+4
+ 506 001c 4B0080E2 		add	r0, r0, #75
+ 507 0020 FEFFFFEB 		bl	__umodsi3
+ 508              	.LVL33:
+ 139:layer1/sync.c **** 	l1s.tpu_offset = tpu_shift;
+ 509              		.loc 1 139 0
+ 510 0024 68509FE5 		ldr	r5, .L39
+ 132:layer1/sync.c **** 	if (tpu_shift < SWITCH_TIME)
+ 511              		.loc 1 132 0
+ 512 0028 6C309FE5 		ldr	r3, .L39+8
+ 127:layer1/sync.c **** 	fn_offset = cinfo->fn_offset - 1;
+ 513              		.loc 1 127 0
+ 514 002c 046094E5 		ldr	r6, [r4, #4]
+ 515              	.LVL34:
+ 132:layer1/sync.c **** 	if (tpu_shift < SWITCH_TIME)
+ 516              		.loc 1 132 0
+ 517 0030 030050E1 		cmp	r0, r3
+ 139:layer1/sync.c **** 	l1s.tpu_offset = tpu_shift;
+ 518              		.loc 1 139 0
+ 519 0034 400A85E5 		str	r0, [r5, #2624]
+ 142:layer1/sync.c **** 	puts("Synchronize_TDMA\n");
+ 520              		.loc 1 142 0
+ 521 0038 60009FE5 		ldr	r0, .L39+12
+ 522              	.LVL35:
+ 127:layer1/sync.c **** 	fn_offset = cinfo->fn_offset - 1;
+ 523              		.loc 1 127 0
+ 524 003c 01604682 		subhi	r6, r6, #1
+ 525              	.LVL36:
+ 142:layer1/sync.c **** 	puts("Synchronize_TDMA\n");
+ 526              		.loc 1 142 0
+ 527 0040 FEFFFFEB 		bl	puts
+ 528              	.LVL37:
+ 529              	.LBB28:
+ 530              	.LBB29:
+ 531              		.file 2 "include/calypso/tpu.h"
+   1:include/calypso/tpu.h **** #ifndef _CALYPSO_TPU_H
+   2:include/calypso/tpu.h **** #define _CALYPSO_TPU_H
+   3:include/calypso/tpu.h **** 
+   4:include/calypso/tpu.h **** #define BITS_PER_TDMA		1250
+   5:include/calypso/tpu.h **** #define QBITS_PER_TDMA		(BITS_PER_TDMA * 4)	/* 5000 */
+   6:include/calypso/tpu.h **** #define TPU_RANGE		QBITS_PER_TDMA
+   7:include/calypso/tpu.h **** #define	SWITCH_TIME		(TPU_RANGE-10)
+   8:include/calypso/tpu.h **** 
+   9:include/calypso/tpu.h **** /* Assert or de-assert TPU reset */
+  10:include/calypso/tpu.h **** void tpu_reset(int active);
+  11:include/calypso/tpu.h **** /* Enable or Disable a new scenario loaded into the TPU */
+  12:include/calypso/tpu.h **** void tpu_enable(int active);
+  13:include/calypso/tpu.h **** /* Enable or Disable the clock of the TPU Module */
+  14:include/calypso/tpu.h **** void tpu_clk_enable(int active);
+  15:include/calypso/tpu.h **** /* Enable Frame Interrupt generation on next frame.  DSP will reset it */
+  16:include/calypso/tpu.h **** void tpu_dsp_frameirq_enable(void);
+  17:include/calypso/tpu.h **** /* Is a Frame interrupt still pending for the DSP ? */
+  18:include/calypso/tpu.h **** int tpu_dsp_fameirq_pending(void);
+  19:include/calypso/tpu.h **** /* Rewind the TPU, i.e. restart enqueueing instructions at the base addr */
+  20:include/calypso/tpu.h **** void tpu_rewind(void);
+  21:include/calypso/tpu.h **** /* Enqueue a raw TPU instruction */
+  22:include/calypso/tpu.h **** void tpu_enqueue(uint16_t instr);
+  23:include/calypso/tpu.h **** /* Initialize TPU and TPU driver */
+  24:include/calypso/tpu.h **** void tpu_init(void);
+  25:include/calypso/tpu.h **** /* (Busy)Wait until TPU is idle */
+  26:include/calypso/tpu.h **** void tpu_wait_idle(void);
+  27:include/calypso/tpu.h **** /* Enable FRAME interrupt generation */
+  28:include/calypso/tpu.h **** void tpu_frame_irq_en(int mcu, int dsp);
+  29:include/calypso/tpu.h **** /* Force the generation of a DSP interrupt */
+  30:include/calypso/tpu.h **** void tpu_force_dsp_frame_irq(void);
+  31:include/calypso/tpu.h **** 
+  32:include/calypso/tpu.h **** /* Get the current TPU SYNCHRO register */
+  33:include/calypso/tpu.h **** uint16_t tpu_get_synchro(void);
+  34:include/calypso/tpu.h **** /* Get the current TPU OFFSET register */
+  35:include/calypso/tpu.h **** uint16_t tpu_get_offset(void);
+  36:include/calypso/tpu.h **** 
+  37:include/calypso/tpu.h **** enum tpu_instr {
+  38:include/calypso/tpu.h **** 	TPU_INSTR_AT		= (1 << 13),
+  39:include/calypso/tpu.h **** 	TPU_INSTR_OFFSET	= (2 << 13),
+  40:include/calypso/tpu.h **** 	TPU_INSTR_SYNCHRO	= (3 << 13),	/* Loading delta synchro value in TPU synchro register */
+  41:include/calypso/tpu.h **** 	TPU_INSTR_WAIT		= (5 << 13),	/* Wait a certain period (in GSM qbits) */
+  42:include/calypso/tpu.h **** 	TPU_INSTR_SLEEP		= (0 << 13),	/* Stop the sequencer by disabling TPU ENABLE bit in ctrl reg */
+  43:include/calypso/tpu.h **** 	/* data processing */
+  44:include/calypso/tpu.h **** 	TPU_INSTR_MOVE		= (4 << 13),
+  45:include/calypso/tpu.h **** };
+  46:include/calypso/tpu.h **** 
+  47:include/calypso/tpu.h **** /* Addresses internal to the TPU, only accessible via MOVE */
+  48:include/calypso/tpu.h **** enum tpu_reg_int {
+  49:include/calypso/tpu.h **** 	TPUI_TSP_CTRL1	= 0x00,
+  50:include/calypso/tpu.h **** 	TPUI_TSP_CTRL2	= 0x01,
+  51:include/calypso/tpu.h **** 	TPUI_TX_1	= 0x04,
+  52:include/calypso/tpu.h **** 	TPUI_TX_2	= 0x03,
+  53:include/calypso/tpu.h **** 	TPUI_TX_3	= 0x02,
+  54:include/calypso/tpu.h **** 	TPUI_TX_4	= 0x05,
+  55:include/calypso/tpu.h **** 	TPUI_TSP_ACT_L	= 0x06,
+  56:include/calypso/tpu.h **** 	TPUI_TSP_ACT_U	= 0x07,
+  57:include/calypso/tpu.h **** 	TPUI_TSP_SET1	= 0x09,
+  58:include/calypso/tpu.h **** 	TPUI_TSP_SET2	= 0x0a,
+  59:include/calypso/tpu.h **** 	TPUI_TSP_SET3	= 0x0b,
+  60:include/calypso/tpu.h **** 	TPUI_DSP_INT_PG	= 0x10,
+  61:include/calypso/tpu.h **** 	TPUI_GAUGING_EN = 0x11,
+  62:include/calypso/tpu.h **** };
+  63:include/calypso/tpu.h **** 
+  64:include/calypso/tpu.h **** enum tpui_ctrl2_bits {
+  65:include/calypso/tpu.h **** 	TPUI_CTRL2_RD		= (1 << 0),
+  66:include/calypso/tpu.h **** 	TPUI_CTRL2_WR		= (1 << 1),
+  67:include/calypso/tpu.h **** };
+  68:include/calypso/tpu.h **** 
+  69:include/calypso/tpu.h **** static inline uint16_t tpu_mod5000(int16_t time)
+  70:include/calypso/tpu.h **** {
+  71:include/calypso/tpu.h **** 	if (time < 0)
+  72:include/calypso/tpu.h **** 		return time + 5000;
+  73:include/calypso/tpu.h **** 	if (time >= 5000)
+  74:include/calypso/tpu.h **** 		return time - 5000;
+  75:include/calypso/tpu.h **** 	return time;
+  76:include/calypso/tpu.h **** }
+  77:include/calypso/tpu.h **** 
+  78:include/calypso/tpu.h **** /* Enqueue a SLEEP operation (stop sequencer by disabling TPU ENABLE bit) */
+  79:include/calypso/tpu.h **** static inline void tpu_enq_sleep(void)
+  80:include/calypso/tpu.h **** {
+  81:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SLEEP);
+  82:include/calypso/tpu.h **** }
+  83:include/calypso/tpu.h **** 
+  84:include/calypso/tpu.h **** /* Enqueue a MOVE operation */
+  85:include/calypso/tpu.h **** static inline void tpu_enq_move(uint8_t addr, uint8_t data)
+  86:include/calypso/tpu.h **** {
+  87:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_MOVE | (data << 5) | (addr & 0x1f));
+  88:include/calypso/tpu.h **** }
+  89:include/calypso/tpu.h **** 
+  90:include/calypso/tpu.h **** /* Enqueue an AT operation */
+  91:include/calypso/tpu.h **** static inline void tpu_enq_at(int16_t time)
+  92:include/calypso/tpu.h **** {
+  93:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_AT | tpu_mod5000(time));
+ 532              		.loc 2 93 0
+ 533 0044 58009FE5 		ldr	r0, .L39+16
+ 534 0048 FEFFFFEB 		bl	tpu_enqueue
+ 535              	.LVL38:
+ 536              	.LBE29:
+ 537              	.LBE28:
+ 145:layer1/sync.c **** 	tpu_enq_sync(l1s.tpu_offset);
+ 538              		.loc 1 145 0
+ 539 004c 400A95E5 		ldr	r0, [r5, #2624]
+ 540              	.LBB30:
+ 541              	.LBB31:
+  94:include/calypso/tpu.h **** }
+  95:include/calypso/tpu.h **** 
+  96:include/calypso/tpu.h **** /* Enqueue a SYNC operation */
+  97:include/calypso/tpu.h **** static inline void tpu_enq_sync(int16_t time)
+  98:include/calypso/tpu.h **** {
+  99:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SYNCHRO | time);
+ 542              		.loc 2 99 0
+ 543 0050 060A80E3 		orr	r0, r0, #24576
+ 544 0054 0008A0E1 		mov	r0, r0, asl #16
+ 545 0058 2008A0E1 		mov	r0, r0, lsr #16
+ 546 005c FEFFFFEB 		bl	tpu_enqueue
+ 547              	.LVL39:
+ 548              	.LBE31:
+ 549              	.LBE30:
+ 152:layer1/sync.c **** 	l1s_time_inc(&l1s.current_time, fn_offset);
+ 550              		.loc 1 152 0
+ 551 0060 0500A0E1 		mov	r0, r5
+ 552 0064 0610A0E1 		mov	r1, r6
+ 553 0068 FEFFFFEB 		bl	l1s_time_inc
+ 153:layer1/sync.c **** 	l1s.next_time = l1s.current_time;
+ 554              		.loc 1 153 0
+ 555 006c 070095E8 		ldmia	r5, {r0, r1, r2}
+ 556 0070 0C3085E2 		add	r3, r5, #12
+ 557 0074 070083E8 		stmia	r3, {r0, r1, r2}
+ 154:layer1/sync.c **** 	l1s_time_inc(&l1s.next_time, 1);
+ 558              		.loc 1 154 0
+ 559 0078 0300A0E1 		mov	r0, r3
+ 560 007c 0110A0E3 		mov	r1, #1
+ 561 0080 FEFFFFEB 		bl	l1s_time_inc
+ 157:layer1/sync.c **** 	cinfo->fn_offset = 0;
+ 562              		.loc 1 157 0
+ 563 0084 0030A0E3 		mov	r3, #0
+ 564 0088 043084E5 		str	r3, [r4, #4]
+ 158:layer1/sync.c **** 	cinfo->time_alignment = 0;
+ 565              		.loc 1 158 0
+ 566 008c 083084E5 		str	r3, [r4, #8]
+ 159:layer1/sync.c **** }
+ 567              		.loc 1 159 0
+ 568 0090 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 569              	.L40:
+ 570              		.align	2
+ 571              	.L39:
+ 572 0094 00000000 		.word	l1s
+ 573 0098 88130000 		.word	5000
+ 574 009c 7D130000 		.word	4989
+ 575 00a0 33000000 		.word	.LC3
+ 576 00a4 7E330000 		.word	13182
+ 577              		.cfi_endproc
+ 578              	.LFE70:
+ 580              		.section	.text.l1s_reset_hw,"ax",%progbits
+ 581              		.align	2
+ 582              		.global	l1s_reset_hw
+ 584              	l1s_reset_hw:
+ 585              	.LFB71:
+ 162:layer1/sync.c **** {
+ 586              		.loc 1 162 0
+ 587              		.cfi_startproc
+ 588              		@ args = 0, pretend = 0, frame = 0
+ 589              		@ frame_needed = 0, uses_anonymous_args = 0
+ 163:layer1/sync.c **** 	dsp_api.w_page = 0;
+ 590              		.loc 1 163 0
+ 591 0000 64309FE5 		ldr	r3, .L42
+ 166:layer1/sync.c **** 	dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+ 592              		.loc 1 166 0
+ 593 0004 64209FE5 		ldr	r2, .L42+4
+ 162:layer1/sync.c **** {
+ 594              		.loc 1 162 0
+ 595 0008 10402DE9 		stmfd	sp!, {r4, lr}
+ 596              	.LCFI3:
+ 597              		.cfi_def_cfa_offset 8
+ 163:layer1/sync.c **** 	dsp_api.w_page = 0;
+ 598              		.loc 1 163 0
+ 599 000c 0040A0E3 		mov	r4, #0
+ 600              		.cfi_offset 14, -4
+ 601              		.cfi_offset 4, -8
+ 166:layer1/sync.c **** 	dsp_api.db_w = (T_DB_MCU_TO_DSP *) BASE_API_W_PAGE_0;
+ 602              		.loc 1 166 0
+ 603 0010 082083E5 		str	r2, [r3, #8]
+ 167:layer1/sync.c **** 	dsp_api.db_r = (T_DB_DSP_TO_MCU *) BASE_API_R_PAGE_0;
+ 604              		.loc 1 167 0
+ 605 0014 502082E2 		add	r2, r2, #80
+ 606 0018 042083E5 		str	r2, [r3, #4]
+ 163:layer1/sync.c **** 	dsp_api.w_page = 0;
+ 607              		.loc 1 163 0
+ 608 001c 144083E5 		str	r4, [r3, #20]
+ 164:layer1/sync.c **** 	dsp_api.r_page = 0;
+ 609              		.loc 1 164 0
+ 610 0020 104083E5 		str	r4, [r3, #16]
+ 165:layer1/sync.c **** 	dsp_api.r_page_used = 0;
+ 611              		.loc 1 165 0
+ 612 0024 184083E5 		str	r4, [r3, #24]
+ 168:layer1/sync.c **** 	dsp_api.ndb->d_dsp_page = 0;
+ 613              		.loc 1 168 0
+ 614 0028 003093E5 		ldr	r3, [r3, #0]
+ 172:layer1/sync.c **** 	tpu_reset(1);
+ 615              		.loc 1 172 0
+ 616 002c 0100A0E3 		mov	r0, #1
+ 168:layer1/sync.c **** 	dsp_api.ndb->d_dsp_page = 0;
+ 617              		.loc 1 168 0
+ 618 0030 B040C3E1 		strh	r4, [r3, #0]	@ movhi
+ 172:layer1/sync.c **** 	tpu_reset(1);
+ 619              		.loc 1 172 0
+ 620 0034 FEFFFFEB 		bl	tpu_reset
+ 173:layer1/sync.c **** 	tpu_reset(0);
+ 621              		.loc 1 173 0
+ 622 0038 0400A0E1 		mov	r0, r4
+ 623 003c FEFFFFEB 		bl	tpu_reset
+ 174:layer1/sync.c **** 	tpu_rewind();
+ 624              		.loc 1 174 0
+ 625 0040 FEFFFFEB 		bl	tpu_rewind
+ 626              	.LVL40:
+ 627              	.LBB32:
+ 628              	.LBB33:
+ 100:include/calypso/tpu.h **** }
+ 101:include/calypso/tpu.h **** 
+ 102:include/calypso/tpu.h **** /* Enqueue a WAIT operation */
+ 103:include/calypso/tpu.h **** static inline void tpu_enq_wait(int16_t time)
+ 104:include/calypso/tpu.h **** {
+ 105:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_WAIT | time);
+ 629              		.loc 2 105 0
+ 630 0044 28009FE5 		ldr	r0, .L42+8
+ 631 0048 FEFFFFEB 		bl	tpu_enqueue
+ 632              	.LVL41:
+ 633              	.LBE33:
+ 634              	.LBE32:
+ 176:layer1/sync.c **** 	tpu_enq_sync(l1s.tpu_offset);
+ 635              		.loc 1 176 0
+ 636 004c 24309FE5 		ldr	r3, .L42+12
+ 637 0050 400A93E5 		ldr	r0, [r3, #2624]
+ 638              	.LBB34:
+ 639              	.LBB35:
+  99:include/calypso/tpu.h **** 	tpu_enqueue(TPU_INSTR_SYNCHRO | time);
+ 640              		.loc 2 99 0
+ 641 0054 060A80E3 		orr	r0, r0, #24576
+ 642 0058 0008A0E1 		mov	r0, r0, asl #16
+ 643 005c 2008A0E1 		mov	r0, r0, lsr #16
+ 644 0060 FEFFFFEB 		bl	tpu_enqueue
+ 645              	.LVL42:
+ 646              	.LBE35:
+ 647              	.LBE34:
+ 178:layer1/sync.c **** }
+ 648              		.loc 1 178 0
+ 649 0064 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 177:layer1/sync.c **** 	tpu_end_scenario();
+ 650              		.loc 1 177 0
+ 651 0068 FEFFFFEA 		b	tpu_end_scenario
+ 652              	.L43:
+ 653              		.align	2
+ 654              	.L42:
+ 655 006c 00000000 		.word	dsp_api
+ 656 0070 0000D0FF 		.word	-3145728
+ 657 0074 05A00000 		.word	40965
+ 658 0078 00000000 		.word	l1s
+ 659              		.cfi_endproc
+ 660              	.LFE71:
+ 662              		.section	.text.l1s_compl_sched,"ax",%progbits
+ 663              		.align	2
+ 664              		.global	l1s_compl_sched
+ 666              	l1s_compl_sched:
+ 667              	.LFB73:
+ 209:layer1/sync.c **** {
+ 668              		.loc 1 209 0
+ 669              		.cfi_startproc
+ 670              		@ args = 0, pretend = 0, frame = 0
+ 671              		@ frame_needed = 0, uses_anonymous_args = 0
+ 672              		@ link register save eliminated.
+ 673              	.LVL43:
+ 674              	.LBB36:
+ 212:layer1/sync.c **** 	local_firq_save(flags);
+ 675              		.loc 1 212 0
+ 676              	@ 212 "layer1/sync.c" 1
+ 677 0000 00200FE1 		mrs	r2, cpsr		@ local_firq_save
+ 678 0004 C03082E3 		orr	r3, r2, #0xC0
+ 679 0008 03F021E1 		msr	cpsr_c, r3
+ 680              	@ 0 "" 2
+ 681              	.LBE36:
+ 213:layer1/sync.c **** 	l1s.scheduled_compl |= (1 << c);
+ 682              		.loc 1 213 0
+ 683 000c 14309FE5 		ldr	r3, .L45
+ 684 0010 6C1A93E5 		ldr	r1, [r3, #2668]
+ 685 0014 01C0A0E3 		mov	ip, #1
+ 686 0018 1C0081E1 		orr	r0, r1, ip, asl r0
+ 687              	.LVL44:
+ 688 001c 6C0A83E5 		str	r0, [r3, #2668]
+ 214:layer1/sync.c **** 	local_irq_restore(flags);
+ 689              		.loc 1 214 0
+ 690              	@ 214 "layer1/sync.c" 1
+ 691 0020 02F021E1 		msr	cpsr_c, r2		@ local_irq_restore
+ 692              	
+ 693              	@ 0 "" 2
+ 215:layer1/sync.c **** }
+ 694              		.loc 1 215 0
+ 695 0024 1EFF2FE1 		bx	lr
+ 696              	.L46:
+ 697              		.align	2
+ 698              	.L45:
+ 699 0028 00000000 		.word	l1s
+ 700              		.cfi_endproc
+ 701              	.LFE73:
+ 703              		.section	.text.l1s_dsp_abort,"ax",%progbits
+ 704              		.align	2
+ 705              		.global	l1s_dsp_abort
+ 707              	l1s_dsp_abort:
+ 708              	.LFB76:
+ 320:layer1/sync.c **** {
+ 709              		.loc 1 320 0
+ 710              		.cfi_startproc
+ 711              		@ args = 0, pretend = 0, frame = 0
+ 712              		@ frame_needed = 0, uses_anonymous_args = 0
+ 713 0000 03402DE9 		stmfd	sp!, {r0, r1, lr}
+ 714              	.LCFI4:
+ 715              		.cfi_def_cfa_offset 12
+ 322:layer1/sync.c **** 	tdma_schedule(0, &l1s_abort_cmd, 0, 0, 0, 10);
+ 716              		.loc 1 322 0
+ 717 0004 0A30A0E3 		mov	r3, #10
+ 718 0008 0000A0E3 		mov	r0, #0
+ 719              		.cfi_offset 14, -4
+ 720              		.cfi_offset 1, -8
+ 721              		.cfi_offset 0, -12
+ 722 000c 04308DE5 		str	r3, [sp, #4]
+ 723 0010 10109FE5 		ldr	r1, .L48
+ 724 0014 0020A0E1 		mov	r2, r0
+ 725 0018 0030A0E1 		mov	r3, r0
+ 726 001c 00008DE5 		str	r0, [sp, #0]
+ 727 0020 FEFFFFEB 		bl	tdma_schedule
+ 323:layer1/sync.c **** }
+ 728              		.loc 1 323 0
+ 729 0024 0C80BDE8 		ldmfd	sp!, {r2, r3, pc}
+ 730              	.L49:
+ 731              		.align	2
+ 732              	.L48:
+ 733 0028 00000000 		.word	l1s_abort_cmd
+ 734              		.cfi_endproc
+ 735              	.LFE76:
+ 737              		.section	.text.l1s_tx_apc_helper,"ax",%progbits
+ 738              		.align	2
+ 739              		.global	l1s_tx_apc_helper
+ 741              	l1s_tx_apc_helper:
+ 742              	.LFB77:
+ 326:layer1/sync.c **** {
+ 743              		.loc 1 326 0
+ 744              		.cfi_startproc
+ 745              		@ args = 0, pretend = 0, frame = 0
+ 746              		@ frame_needed = 0, uses_anonymous_args = 0
+ 747              	.LVL45:
+ 748 0000 0008A0E1 		mov	r0, r0, asl #16
+ 749              	.LVL46:
+ 750 0004 04E02DE5 		str	lr, [sp, #-4]!
+ 751              	.LCFI5:
+ 752              		.cfi_def_cfa_offset 4
+ 332:layer1/sync.c **** 	band = gsm_arfcn2band(arfcn);
+ 753              		.loc 1 332 0
+ 754 0008 2008A0E1 		mov	r0, r0, lsr #16
+ 755              		.cfi_offset 14, -4
+ 756 000c FEFFFFEB 		bl	gsm_arfcn2band
+ 333:layer1/sync.c **** 	auxapc = apc_tx_pwrlvl2auxapc(band, l1s.tx_power);
+ 757              		.loc 1 333 0
+ 758 0010 60309FE5 		ldr	r3, .L53
+ 759 0014 491AD3E5 		ldrb	r1, [r3, #2633]	@ zero_extendqisi2
+ 760 0018 FEFFFFEB 		bl	apc_tx_pwrlvl2auxapc
+ 761              	.LVL47:
+ 337:layer1/sync.c **** 	dsp_api.ndb->d_apcoff = ABB_VAL(APCOFF, (1 << 6) | MY_OFFSET) | 1; /* 2x slope for the GTA-02 ramp
+ 762              		.loc 1 337 0
+ 763 001c 58309FE5 		ldr	r3, .L53+4
+ 764 0020 58109FE5 		ldr	r1, .L53+8
+ 765 0024 002093E5 		ldr	r2, [r3, #0]
+ 766 0028 BA13C2E1 		strh	r1, [r2, #58]	@ movhi
+ 345:layer1/sync.c **** 	dsp_api.db_w->d_power_ctl = ABB_VAL(AUXAPC, auxapc);
+ 767              		.loc 1 345 0
+ 768 002c 0018A0E1 		mov	r1, r0, asl #16
+ 769 0030 083093E5 		ldr	r3, [r3, #8]
+ 770 0034 2115A0E1 		mov	r1, r1, lsr #10
+ 771 0038 121081E3 		orr	r1, r1, #18
+ 772 003c BC11C3E1 		strh	r1, [r3, #28]	@ movhi
+ 773              	.LVL48:
+ 774 0040 3C109FE5 		ldr	r1, .L53+12
+ 325:layer1/sync.c **** void l1s_tx_apc_helper(uint16_t arfcn)
+ 775              		.loc 1 325 0
+ 776 0044 762F82E2 		add	r2, r2, #472
+ 777 0048 022082E2 		add	r2, r2, #2
+ 778 004c 200081E2 		add	r0, r1, #32
+ 779              	.LVL49:
+ 780              	.L51:
+ 349:layer1/sync.c **** 		dsp_api.ndb->a_ramp[i] = ABB_VAL(APCRAM, twl3025_default_ramp[i]);
+ 781              		.loc 1 349 0 discriminator 2
+ 782 0050 B2C0F1E1 		ldrh	ip, [r1, #2]!
+ 783 0054 0CC3A0E1 		mov	ip, ip, asl #6
+ 784 0058 14C08CE3 		orr	ip, ip, #20
+ 348:layer1/sync.c **** 	for (i = 0; i < 16; i++)
+ 785              		.loc 1 348 0 discriminator 2
+ 786 005c 000051E1 		cmp	r1, r0
+ 349:layer1/sync.c **** 		dsp_api.ndb->a_ramp[i] = ABB_VAL(APCRAM, twl3025_default_ramp[i]);
+ 787              		.loc 1 349 0 discriminator 2
+ 788 0060 B2C0E2E1 		strh	ip, [r2, #2]!	@ movhi
+ 348:layer1/sync.c **** 	for (i = 0; i < 16; i++)
+ 789              		.loc 1 348 0 discriminator 2
+ 790 0064 F9FFFF1A 		bne	.L51
+ 352:layer1/sync.c **** 	dsp_api.db_w->d_ctrl_abb |= (1 << B_RAMP) | (1 << B_BULRAMPDEL);
+ 791              		.loc 1 352 0
+ 792 0068 B621D3E1 		ldrh	r2, [r3, #22]
+ 793 006c 092082E3 		orr	r2, r2, #9
+ 794 0070 B621C3E1 		strh	r2, [r3, #22]	@ movhi
+ 353:layer1/sync.c **** }
+ 795              		.loc 1 353 0
+ 796 0074 04F09DE4 		ldr	pc, [sp], #4
+ 797              	.L54:
+ 798              		.align	2
+ 799              	.L53:
+ 800 0078 00000000 		.word	l1s
+ 801 007c 00000000 		.word	dsp_api
+ 802 0080 17110000 		.word	4375
+ 803 0084 FEFFFFFF 		.word	twl3025_default_ramp-2
+ 804              		.cfi_endproc
+ 805              	.LFE77:
+ 807              		.section	.text.l1s_reset,"ax",%progbits
+ 808              		.align	2
+ 809              		.global	l1s_reset
+ 811              	l1s_reset:
+ 812              	.LFB79:
+ 360:layer1/sync.c **** 
+ 361:layer1/sync.c **** /* reset the layer1 as part of synchronizing to a new cell */
+ 362:layer1/sync.c **** void l1s_reset(void)
+ 363:layer1/sync.c **** {
+ 813              		.loc 1 363 0
+ 814              		.cfi_startproc
+ 815              		@ args = 0, pretend = 0, frame = 0
+ 816              		@ frame_needed = 0, uses_anonymous_args = 0
+ 364:layer1/sync.c **** 	/* Reset state */
+ 365:layer1/sync.c **** 	l1s.fb.mode = 0;
+ 817              		.loc 1 365 0
+ 818 0000 34309FE5 		ldr	r3, .L56
+ 363:layer1/sync.c **** {
+ 819              		.loc 1 363 0
+ 820 0004 10402DE9 		stmfd	sp!, {r4, lr}
+ 821              	.LCFI6:
+ 822              		.cfi_def_cfa_offset 8
+ 366:layer1/sync.c **** 	l1s.tx_power = 7; /* initial power reset */
+ 823              		.loc 1 366 0
+ 824 0008 0720A0E3 		mov	r2, #7
+ 365:layer1/sync.c **** 	l1s.fb.mode = 0;
+ 825              		.loc 1 365 0
+ 826 000c 0040A0E3 		mov	r4, #0
+ 827              		.cfi_offset 14, -4
+ 828              		.cfi_offset 4, -8
+ 829 0010 F04AC3E5 		strb	r4, [r3, #2800]
+ 830              		.loc 1 366 0
+ 831 0014 492AC3E5 		strb	r2, [r3, #2633]
+ 367:layer1/sync.c **** 
+ 368:layer1/sync.c **** 	/* Leave dedicated mode */
+ 369:layer1/sync.c **** 	l1s.dedicated.type = GSM_DCHAN_NONE;
+ 832              		.loc 1 369 0
+ 833 0018 084B83E5 		str	r4, [r3, #2824]
+ 370:layer1/sync.c **** 
+ 371:layer1/sync.c **** 	/* reset scheduler and hardware */
+ 372:layer1/sync.c **** 	sched_gsmtime_reset();
+ 834              		.loc 1 372 0
+ 835 001c FEFFFFEB 		bl	sched_gsmtime_reset
+ 373:layer1/sync.c **** 	mframe_reset();
+ 836              		.loc 1 373 0
+ 837 0020 FEFFFFEB 		bl	mframe_reset
+ 374:layer1/sync.c **** 	tdma_sched_reset();
+ 838              		.loc 1 374 0
+ 839 0024 FEFFFFEB 		bl	tdma_sched_reset
+ 375:layer1/sync.c **** 	l1s_dsp_abort();
+ 840              		.loc 1 375 0
+ 841 0028 FEFFFFEB 		bl	l1s_dsp_abort
+ 376:layer1/sync.c **** 
+ 377:layer1/sync.c **** 	/* Cipher off */
+ 378:layer1/sync.c **** 	dsp_load_ciph_param(0, NULL);
+ 842              		.loc 1 378 0
+ 843 002c 0400A0E1 		mov	r0, r4
+ 844 0030 0410A0E1 		mov	r1, r4
+ 379:layer1/sync.c **** }
+ 845              		.loc 1 379 0
+ 846 0034 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 378:layer1/sync.c **** 	dsp_load_ciph_param(0, NULL);
+ 847              		.loc 1 378 0
+ 848 0038 FEFFFFEA 		b	dsp_load_ciph_param
+ 849              	.L57:
+ 850              		.align	2
+ 851              	.L56:
+ 852 003c 00000000 		.word	l1s
+ 853              		.cfi_endproc
+ 854              	.LFE79:
+ 856              		.section	.text.l1s_init,"ax",%progbits
+ 857              		.align	2
+ 858              		.global	l1s_init
+ 860              	l1s_init:
+ 861              	.LFB80:
+ 380:layer1/sync.c **** 
+ 381:layer1/sync.c **** void l1s_init(void)
+ 382:layer1/sync.c **** {
+ 862              		.loc 1 382 0
+ 863              		.cfi_startproc
+ 864              		@ args = 0, pretend = 0, frame = 0
+ 865              		@ frame_needed = 0, uses_anonymous_args = 0
+ 866              	.LVL50:
+ 383:layer1/sync.c **** 	unsigned int i;
+ 384:layer1/sync.c **** 
+ 385:layer1/sync.c **** 	for (i = 0; i < ARRAY_SIZE(l1s.tx_queue); i++)
+ 386:layer1/sync.c **** 		INIT_LLIST_HEAD(&l1s.tx_queue[i]);
+ 867              		.loc 1 386 0
+ 868 0000 90309FE5 		ldr	r3, .L59
+ 869 0004 A52E83E2 		add	r2, r3, #2640
+ 382:layer1/sync.c **** {
+ 870              		.loc 1 382 0
+ 871 0008 10402DE9 		stmfd	sp!, {r4, lr}
+ 872              	.LCFI7:
+ 873              		.cfi_def_cfa_offset 8
+ 874              		.loc 1 386 0
+ 875 000c 502A83E5 		str	r2, [r3, #2640]
+ 876 0010 542A83E5 		str	r2, [r3, #2644]
+ 877              	.LVL51:
+ 878 0014 80209FE5 		ldr	r2, .L59+4
+ 387:layer1/sync.c **** 	l1s.tx_meas = NULL;
+ 879              		.loc 1 387 0
+ 880 0018 0040A0E3 		mov	r4, #0
+ 881              		.cfi_offset 14, -4
+ 882              		.cfi_offset 4, -8
+ 386:layer1/sync.c **** 		INIT_LLIST_HEAD(&l1s.tx_queue[i]);
+ 883              		.loc 1 386 0
+ 884 001c 582A83E5 		str	r2, [r3, #2648]
+ 885 0020 5C2A83E5 		str	r2, [r3, #2652]
+ 886              	.LVL52:
+ 887 0024 A62E83E2 		add	r2, r3, #2656
+ 888 0028 602A83E5 		str	r2, [r3, #2656]
+ 889 002c 642A83E5 		str	r2, [r3, #2660]
+ 890              	.LVL53:
+ 891              		.loc 1 387 0
+ 892 0030 684A83E5 		str	r4, [r3, #2664]
+ 388:layer1/sync.c **** 
+ 389:layer1/sync.c **** 	sched_gsmtime_init();
+ 893              		.loc 1 389 0
+ 894 0034 FEFFFFEB 		bl	sched_gsmtime_init
+ 390:layer1/sync.c **** 
+ 391:layer1/sync.c **** 	/* register FRAME interrupt as FIQ so it can interrupt normal IRQs */
+ 392:layer1/sync.c **** 	irq_register_handler(IRQ_TPU_FRAME, &frame_irq);
+ 895              		.loc 1 392 0
+ 896 0038 0400A0E3 		mov	r0, #4
+ 897 003c 5C109FE5 		ldr	r1, .L59+8
+ 898 0040 FEFFFFEB 		bl	irq_register_handler
+ 393:layer1/sync.c **** 	irq_config(IRQ_TPU_FRAME, 1, 1, 0);
+ 899              		.loc 1 393 0
+ 900 0044 0110A0E3 		mov	r1, #1
+ 901 0048 0120A0E1 		mov	r2, r1
+ 902 004c 0430A0E1 		mov	r3, r4
+ 903 0050 0400A0E3 		mov	r0, #4
+ 904 0054 FEFFFFEB 		bl	irq_config
+ 394:layer1/sync.c **** 	irq_enable(IRQ_TPU_FRAME);
+ 905              		.loc 1 394 0
+ 906 0058 0400A0E3 		mov	r0, #4
+ 907 005c FEFFFFEB 		bl	irq_enable
+ 395:layer1/sync.c **** 
+ 396:layer1/sync.c **** 	/* configure timer 1 to be auto-reload and have a prescale of 12 (13MHz/12 == qbit clock) */
+ 397:layer1/sync.c **** 	hwtimer_enable(1, 1);
+ 908              		.loc 1 397 0
+ 909 0060 0100A0E3 		mov	r0, #1
+ 910 0064 0010A0E1 		mov	r1, r0
+ 911 0068 FEFFFFEB 		bl	hwtimer_enable
+ 398:layer1/sync.c **** 	hwtimer_load(1, (1875*4)-1);
+ 912              		.loc 1 398 0
+ 913 006c 0100A0E3 		mov	r0, #1
+ 914 0070 2C109FE5 		ldr	r1, .L59+12
+ 915 0074 FEFFFFEB 		bl	hwtimer_load
+ 399:layer1/sync.c **** 	hwtimer_config(1, 0, 1);
+ 916              		.loc 1 399 0
+ 917 0078 0100A0E3 		mov	r0, #1
+ 918 007c 0410A0E1 		mov	r1, r4
+ 919 0080 0020A0E1 		mov	r2, r0
+ 920 0084 FEFFFFEB 		bl	hwtimer_config
+ 400:layer1/sync.c **** 	hwtimer_enable(1, 1);
+ 921              		.loc 1 400 0
+ 922 0088 0100A0E3 		mov	r0, #1
+ 923 008c 0010A0E1 		mov	r1, r0
+ 401:layer1/sync.c **** }
+ 924              		.loc 1 401 0
+ 925 0090 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 400:layer1/sync.c **** 	hwtimer_enable(1, 1);
+ 926              		.loc 1 400 0
+ 927 0094 FEFFFFEA 		b	hwtimer_enable
+ 928              	.L60:
+ 929              		.align	2
+ 930              	.L59:
+ 931 0098 00000000 		.word	l1s
+ 932 009c 580A0000 		.word	l1s+2648
+ 933 00a0 00000000 		.word	frame_irq
+ 934 00a4 4B1D0000 		.word	7499
+ 935              		.cfi_endproc
+ 936              	.LFE80:
+ 938              		.comm	l1s,3360,4
+ 939              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 940              	.LC0:
+ 941 0000 4C4F5354 		.ascii	"LOST %d!\012\000"
+ 941      20256421 
+ 941      0A00
+ 942              	.LC1:
+ 943 000a 44535020 		.ascii	"DSP Error Status: %u\012\000"
+ 943      4572726F 
+ 943      72205374 
+ 943      61747573 
+ 943      3A202575 
+ 944              	.LC2:
+ 945 0020 666E3D25 		.ascii	"fn=%lu(%u/%2u/%2u)\000"
+ 945      6C752825 
+ 945      752F2532 
+ 945      752F2532 
+ 945      752900
+ 946              	.LC3:
+ 947 0033 53796E63 		.ascii	"Synchronize_TDMA\012\000"
+ 947      68726F6E 
+ 947      697A655F 
+ 947      54444D41 
+ 947      0A00
+ 948              		.bss
+ 949              		.align	2
+ 950              		.set	.LANCHOR0,. + 0
+ 953              	last_timestamp:
+ 954 0000 00000000 		.space	4
+ 955              		.text
+ 956              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 sync.c
+     /tmp/ccVWtcHN.s:12     .text.l1s_abort_cmd:0000000000000000 $a
+     /tmp/ccVWtcHN.s:14     .text.l1s_abort_cmd:0000000000000000 l1s_abort_cmd
+     /tmp/ccVWtcHN.s:63     .text.l1s_abort_cmd:000000000000004c $d
+     /tmp/ccVWtcHN.s:70     .text.l1s_time_inc:0000000000000000 $a
+     /tmp/ccVWtcHN.s:73     .text.l1s_time_inc:0000000000000000 l1s_time_inc
+     /tmp/ccVWtcHN.s:146    .text.l1s_time_inc:00000000000000c0 $d
+     /tmp/ccVWtcHN.s:152    .text.frame_irq:0000000000000000 $a
+     /tmp/ccVWtcHN.s:154    .text.frame_irq:0000000000000000 frame_irq
+     /tmp/ccVWtcHN.s:331    .text.frame_irq:0000000000000158 $d
+                            *COM*:0000000000000d20 l1s
+     /tmp/ccVWtcHN.s:345    .text.l1s_time_dump:0000000000000000 $a
+     /tmp/ccVWtcHN.s:348    .text.l1s_time_dump:0000000000000000 l1s_time_dump
+     /tmp/ccVWtcHN.s:378    .text.l1s_time_dump:0000000000000028 $d
+     /tmp/ccVWtcHN.s:383    .text.clip_int16:0000000000000000 $a
+     /tmp/ccVWtcHN.s:386    .text.clip_int16:0000000000000000 clip_int16
+     /tmp/ccVWtcHN.s:423    .text.l1s_snr_int:0000000000000000 $a
+     /tmp/ccVWtcHN.s:426    .text.l1s_snr_int:0000000000000000 l1s_snr_int
+     /tmp/ccVWtcHN.s:444    .text.l1s_snr_fract:0000000000000000 $a
+     /tmp/ccVWtcHN.s:447    .text.l1s_snr_fract:0000000000000000 l1s_snr_fract
+     /tmp/ccVWtcHN.s:475    .text.synchronize_tdma:0000000000000000 $a
+     /tmp/ccVWtcHN.s:478    .text.synchronize_tdma:0000000000000000 synchronize_tdma
+     /tmp/ccVWtcHN.s:572    .text.synchronize_tdma:0000000000000094 $d
+     /tmp/ccVWtcHN.s:581    .text.l1s_reset_hw:0000000000000000 $a
+     /tmp/ccVWtcHN.s:584    .text.l1s_reset_hw:0000000000000000 l1s_reset_hw
+     /tmp/ccVWtcHN.s:655    .text.l1s_reset_hw:000000000000006c $d
+     /tmp/ccVWtcHN.s:663    .text.l1s_compl_sched:0000000000000000 $a
+     /tmp/ccVWtcHN.s:666    .text.l1s_compl_sched:0000000000000000 l1s_compl_sched
+     /tmp/ccVWtcHN.s:699    .text.l1s_compl_sched:0000000000000028 $d
+     /tmp/ccVWtcHN.s:704    .text.l1s_dsp_abort:0000000000000000 $a
+     /tmp/ccVWtcHN.s:707    .text.l1s_dsp_abort:0000000000000000 l1s_dsp_abort
+     /tmp/ccVWtcHN.s:733    .text.l1s_dsp_abort:0000000000000028 $d
+     /tmp/ccVWtcHN.s:738    .text.l1s_tx_apc_helper:0000000000000000 $a
+     /tmp/ccVWtcHN.s:741    .text.l1s_tx_apc_helper:0000000000000000 l1s_tx_apc_helper
+     /tmp/ccVWtcHN.s:800    .text.l1s_tx_apc_helper:0000000000000078 $d
+     /tmp/ccVWtcHN.s:808    .text.l1s_reset:0000000000000000 $a
+     /tmp/ccVWtcHN.s:811    .text.l1s_reset:0000000000000000 l1s_reset
+     /tmp/ccVWtcHN.s:852    .text.l1s_reset:000000000000003c $d
+     /tmp/ccVWtcHN.s:857    .text.l1s_init:0000000000000000 $a
+     /tmp/ccVWtcHN.s:860    .text.l1s_init:0000000000000000 l1s_init
+     /tmp/ccVWtcHN.s:931    .text.l1s_init:0000000000000098 $d
+     /tmp/ccVWtcHN.s:949    .bss:0000000000000000 $d
+     /tmp/ccVWtcHN.s:953    .bss:0000000000000000 last_timestamp
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+dsp_api
+gsm_fn2gsmtime
+hwtimer_read
+printf
+dsp_api_memset
+afc_load_dsp
+tdma_sched_flag_scan
+l1s_win_init
+tdma_sched_execute
+dsp_end_scenario
+tpu_end_scenario
+mframe_schedule
+sched_gsmtime_execute
+tdma_sched_advance
+__umodsi3
+puts
+tpu_enqueue
+tpu_reset
+tpu_rewind
+tdma_schedule
+gsm_arfcn2band
+apc_tx_pwrlvl2auxapc
+twl3025_default_ramp
+sched_gsmtime_reset
+mframe_reset
+tdma_sched_reset
+dsp_load_ciph_param
+sched_gsmtime_init
+irq_register_handler
+irq_config
+irq_enable
+hwtimer_enable
+hwtimer_load
+hwtimer_config

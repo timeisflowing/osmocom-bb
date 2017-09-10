@@ -1,0 +1,756 @@
+   1              		.file	"keypad.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.keypad_irq,"ax",%progbits
+  12              		.align	2
+  14              	keypad_irq:
+  15              	.LFB15:
+  16              		.file 1 "calypso/keypad.c"
+   1:calypso/keypad.c **** /* Driver for the keypad attached to the TI Calypso */
+   2:calypso/keypad.c **** 
+   3:calypso/keypad.c **** /* (C) 2010 by roh <roh@hyte.de>
+   4:calypso/keypad.c ****  * (C) 2013 by Steve Markgraf <steve@steve-m.de>
+   5:calypso/keypad.c ****  *
+   6:calypso/keypad.c ****  * All Rights Reserved
+   7:calypso/keypad.c ****  *
+   8:calypso/keypad.c ****  * This program is free software; you can redistribute it and/or modify
+   9:calypso/keypad.c ****  * it under the terms of the GNU General Public License as published by
+  10:calypso/keypad.c ****  * the Free Software Foundation; either version 2 of the License, or
+  11:calypso/keypad.c ****  * (at your option) any later version.
+  12:calypso/keypad.c ****  *
+  13:calypso/keypad.c ****  * This program is distributed in the hope that it will be useful,
+  14:calypso/keypad.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  15:calypso/keypad.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  16:calypso/keypad.c ****  * GNU General Public License for more details.
+  17:calypso/keypad.c ****  *
+  18:calypso/keypad.c ****  * You should have received a copy of the GNU General Public License along
+  19:calypso/keypad.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  20:calypso/keypad.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  21:calypso/keypad.c ****  *
+  22:calypso/keypad.c ****  */
+  23:calypso/keypad.c **** 
+  24:calypso/keypad.c **** #include <stdint.h>
+  25:calypso/keypad.c **** #include <stdio.h>
+  26:calypso/keypad.c **** 
+  27:calypso/keypad.c **** #include <defines.h>
+  28:calypso/keypad.c **** #include <debug.h>
+  29:calypso/keypad.c **** #include <delay.h>
+  30:calypso/keypad.c **** #include <memory.h>
+  31:calypso/keypad.c **** #include <keypad.h>
+  32:calypso/keypad.c **** 
+  33:calypso/keypad.c **** #include <calypso/irq.h>
+  34:calypso/keypad.c **** #include <abb/twl3025.h>
+  35:calypso/keypad.c **** #include <comm/timer.h>
+  36:calypso/keypad.c **** 
+  37:calypso/keypad.c **** #define KBR_LATCH_REG	0xfffe480a
+  38:calypso/keypad.c **** #define KBC_REG		0xfffe480c
+  39:calypso/keypad.c **** #define KBD_GPIO_INT	0xfffe4816
+  40:calypso/keypad.c **** #define KBD_GPIO_MASKIT	0xfffe4818
+  41:calypso/keypad.c **** 
+  42:calypso/keypad.c **** static key_handler_t key_handler = NULL;
+  43:calypso/keypad.c **** 
+  44:calypso/keypad.c **** void emit_key(uint8_t key, uint8_t state)
+  45:calypso/keypad.c **** {
+  46:calypso/keypad.c **** 	printf("key=%u %s\n", key, state == PRESSED ? "pressed" : "released");
+  47:calypso/keypad.c **** 
+  48:calypso/keypad.c **** 	if(key_handler) {
+  49:calypso/keypad.c **** 		key_handler(key, state);
+  50:calypso/keypad.c **** 	}
+  51:calypso/keypad.c **** }
+  52:calypso/keypad.c **** 
+  53:calypso/keypad.c **** volatile uint32_t lastbuttons = 0;
+  54:calypso/keypad.c **** static const uint8_t *btn_map;
+  55:calypso/keypad.c **** unsigned long power_hold = 0;
+  56:calypso/keypad.c **** 
+  57:calypso/keypad.c **** void dispatch_buttons(uint32_t buttons)
+  58:calypso/keypad.c **** {
+  59:calypso/keypad.c **** 	int i;
+  60:calypso/keypad.c **** 	uint8_t state;
+  61:calypso/keypad.c **** 
+  62:calypso/keypad.c **** 	if ((buttons & (1 << btn_map[KEY_POWER]))) {
+  63:calypso/keypad.c **** 		/* hold button 500ms to shut down */
+  64:calypso/keypad.c **** 		if ((lastbuttons & (1 << btn_map[KEY_POWER]))) {
+  65:calypso/keypad.c **** 			unsigned long elapsed = jiffies - power_hold;
+  66:calypso/keypad.c **** 			if (elapsed > 50)
+  67:calypso/keypad.c **** 				twl3025_power_off();
+  68:calypso/keypad.c **** 			power_hold++;
+  69:calypso/keypad.c **** 		} else
+  70:calypso/keypad.c **** 		power_hold = jiffies;
+  71:calypso/keypad.c **** 	}
+  72:calypso/keypad.c **** 
+  73:calypso/keypad.c **** 	if (buttons == lastbuttons)
+  74:calypso/keypad.c **** 		return;
+  75:calypso/keypad.c **** 
+  76:calypso/keypad.c **** 	uint32_t diff = buttons ^ lastbuttons;
+  77:calypso/keypad.c **** 	for (i = 0; i < BUTTON_CNT; i++) {
+  78:calypso/keypad.c **** 		if (diff & (1 << btn_map[i])) {
+  79:calypso/keypad.c **** 			state = (buttons & (1 << btn_map[i])) ? PRESSED : RELEASED;
+  80:calypso/keypad.c **** 			emit_key(i, state);
+  81:calypso/keypad.c **** 		}
+  82:calypso/keypad.c **** 	}
+  83:calypso/keypad.c **** 	lastbuttons = buttons;
+  84:calypso/keypad.c **** }
+  85:calypso/keypad.c **** 
+  86:calypso/keypad.c **** static uint8_t	polling = 0;
+  87:calypso/keypad.c **** static uint8_t  with_interrupts = 0;
+  88:calypso/keypad.c **** 
+  89:calypso/keypad.c **** static void keypad_irq(__unused enum irq_nr nr)
+  90:calypso/keypad.c **** {
+  17              		.loc 1 90 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+  91:calypso/keypad.c **** 	/* enable polling */
+  92:calypso/keypad.c **** 	polling = 1;
+  23              		.loc 1 92 0
+  24 0000 0C309FE5 		ldr	r3, .L2
+  25 0004 0120A0E3 		mov	r2, #1
+  93:calypso/keypad.c **** 	irq_disable(IRQ_KEYPAD_GPIO);
+  26              		.loc 1 93 0
+  27 0008 0800A0E3 		mov	r0, #8
+  28              	.LVL1:
+  92:calypso/keypad.c **** 	polling = 1;
+  29              		.loc 1 92 0
+  30 000c 0020C3E5 		strb	r2, [r3, #0]
+  94:calypso/keypad.c **** }
+  31              		.loc 1 94 0
+  93:calypso/keypad.c **** 	irq_disable(IRQ_KEYPAD_GPIO);
+  32              		.loc 1 93 0
+  33 0010 FEFFFFEA 		b	irq_disable
+  34              	.L3:
+  35              		.align	2
+  36              	.L2:
+  37 0014 00000000 		.word	.LANCHOR0
+  38              		.cfi_endproc
+  39              	.LFE15:
+  41              		.section	.text.emit_key,"ax",%progbits
+  42              		.align	2
+  43              		.global	emit_key
+  45              	emit_key:
+  46              	.LFB13:
+  45:calypso/keypad.c **** {
+  47              		.loc 1 45 0
+  48              		.cfi_startproc
+  49              		@ args = 0, pretend = 0, frame = 0
+  50              		@ frame_needed = 0, uses_anonymous_args = 0
+  51              	.LVL2:
+  46:calypso/keypad.c **** 	printf("key=%u %s\n", key, state == PRESSED ? "pressed" : "released");
+  52              		.loc 1 46 0
+  53 0000 40309FE5 		ldr	r3, .L8
+  54 0004 40209FE5 		ldr	r2, .L8+4
+  45:calypso/keypad.c **** {
+  55              		.loc 1 45 0
+  56 0008 30402DE9 		stmfd	sp!, {r4, r5, lr}
+  57              	.LCFI0:
+  58              		.cfi_def_cfa_offset 12
+  46:calypso/keypad.c **** 	printf("key=%u %s\n", key, state == PRESSED ? "pressed" : "released");
+  59              		.loc 1 46 0
+  60 000c FF5011E2 		ands	r5, r1, #255
+  61              		.cfi_offset 14, -4
+  62              		.cfi_offset 5, -8
+  63              		.cfi_offset 4, -12
+  45:calypso/keypad.c **** {
+  64              		.loc 1 45 0
+  65 0010 FF4000E2 		and	r4, r0, #255
+  46:calypso/keypad.c **** 	printf("key=%u %s\n", key, state == PRESSED ? "pressed" : "released");
+  66              		.loc 1 46 0
+  67 0014 0320A001 		moveq	r2, r3
+  68 0018 30009FE5 		ldr	r0, .L8+8
+  69              	.LVL3:
+  70 001c 0410A0E1 		mov	r1, r4
+  71              	.LVL4:
+  72 0020 FEFFFFEB 		bl	printf
+  48:calypso/keypad.c **** 	if(key_handler) {
+  73              		.loc 1 48 0
+  74 0024 28309FE5 		ldr	r3, .L8+12
+  75 0028 043093E5 		ldr	r3, [r3, #4]
+  76 002c 000053E3 		cmp	r3, #0
+  77 0030 3080BD08 		ldmeqfd	sp!, {r4, r5, pc}
+  49:calypso/keypad.c **** 		key_handler(key, state);
+  78              		.loc 1 49 0
+  79 0034 0400A0E1 		mov	r0, r4
+  80 0038 0510A0E1 		mov	r1, r5
+  81 003c 0FE0A0E1 		mov	lr, pc
+  82 0040 13FF2FE1 		bx	r3
+  83 0044 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+  84              	.L9:
+  85              		.align	2
+  86              	.L8:
+  87 0048 00000000 		.word	.LC0
+  88 004c 08000000 		.word	.LC1
+  89 0050 11000000 		.word	.LC2
+  90 0054 00000000 		.word	.LANCHOR0
+  91              		.cfi_endproc
+  92              	.LFE13:
+  94              		.section	.text.dispatch_buttons,"ax",%progbits
+  95              		.align	2
+  96              		.global	dispatch_buttons
+  98              	dispatch_buttons:
+  99              	.LFB14:
+  58:calypso/keypad.c **** {
+ 100              		.loc 1 58 0
+ 101              		.cfi_startproc
+ 102              		@ args = 0, pretend = 0, frame = 0
+ 103              		@ frame_needed = 0, uses_anonymous_args = 0
+ 104              	.LVL5:
+ 105 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 106              	.LCFI1:
+ 107              		.cfi_def_cfa_offset 24
+  62:calypso/keypad.c **** 	if ((buttons & (1 << btn_map[KEY_POWER]))) {
+ 108              		.loc 1 62 0
+ 109 0004 B0309FE5 		ldr	r3, .L19
+ 110 0008 082093E5 		ldr	r2, [r3, #8]
+ 111 000c 1420D2E5 		ldrb	r2, [r2, #20]	@ zero_extendqisi2
+ 112 0010 0110A0E3 		mov	r1, #1
+ 113 0014 1122A0E1 		mov	r2, r1, asl r2
+ 114 0018 000012E1 		tst	r2, r0
+  58:calypso/keypad.c **** {
+ 115              		.loc 1 58 0
+ 116 001c 0040A0E1 		mov	r4, r0
+ 117              		.cfi_offset 14, -4
+ 118              		.cfi_offset 8, -8
+ 119              		.cfi_offset 7, -12
+ 120              		.cfi_offset 6, -16
+ 121              		.cfi_offset 5, -20
+ 122              		.cfi_offset 4, -24
+  62:calypso/keypad.c **** 	if ((buttons & (1 << btn_map[KEY_POWER]))) {
+ 123              		.loc 1 62 0
+ 124 0020 0D00000A 		beq	.L11
+  64:calypso/keypad.c **** 		if ((lastbuttons & (1 << btn_map[KEY_POWER]))) {
+ 125              		.loc 1 64 0
+ 126 0024 0C1093E5 		ldr	r1, [r3, #12]
+ 127 0028 010012E1 		tst	r2, r1
+ 128 002c 8C209FE5 		ldr	r2, .L19+4
+  70:calypso/keypad.c **** 		power_hold = jiffies;
+ 129              		.loc 1 70 0
+ 130 0030 00209205 		ldreq	r2, [r2, #0]
+  64:calypso/keypad.c **** 		if ((lastbuttons & (1 << btn_map[KEY_POWER]))) {
+ 131              		.loc 1 64 0
+ 132 0034 0700000A 		beq	.L18
+ 133              	.LBB2:
+  65:calypso/keypad.c **** 			unsigned long elapsed = jiffies - power_hold;
+ 134              		.loc 1 65 0
+ 135 0038 002092E5 		ldr	r2, [r2, #0]
+ 136              	.LVL6:
+ 137 003c 103093E5 		ldr	r3, [r3, #16]
+ 138 0040 023063E0 		rsb	r3, r3, r2
+  66:calypso/keypad.c **** 			if (elapsed > 50)
+ 139              		.loc 1 66 0
+ 140 0044 320053E3 		cmp	r3, #50
+  67:calypso/keypad.c **** 				twl3025_power_off();
+ 141              		.loc 1 67 0
+ 142 0048 FEFFFF8B 		blhi	twl3025_power_off
+ 143              	.LVL7:
+ 144              	.L13:
+  68:calypso/keypad.c **** 			power_hold++;
+ 145              		.loc 1 68 0
+ 146 004c 68309FE5 		ldr	r3, .L19
+ 147 0050 102093E5 		ldr	r2, [r3, #16]
+ 148 0054 012082E2 		add	r2, r2, #1
+ 149              	.L18:
+ 150              	.LBE2:
+  70:calypso/keypad.c **** 		power_hold = jiffies;
+ 151              		.loc 1 70 0
+ 152 0058 102083E5 		str	r2, [r3, #16]
+ 153              	.L11:
+  73:calypso/keypad.c **** 	if (buttons == lastbuttons)
+ 154              		.loc 1 73 0
+ 155 005c 58709FE5 		ldr	r7, .L19
+ 156 0060 0C3097E5 		ldr	r3, [r7, #12]
+ 157 0064 030054E1 		cmp	r4, r3
+ 158 0068 F081BD08 		ldmeqfd	sp!, {r4, r5, r6, r7, r8, pc}
+  76:calypso/keypad.c **** 	uint32_t diff = buttons ^ lastbuttons;
+ 159              		.loc 1 76 0
+ 160 006c 0C8097E5 		ldr	r8, [r7, #12]
+  77:calypso/keypad.c **** 	for (i = 0; i < BUTTON_CNT; i++) {
+ 161              		.loc 1 77 0
+ 162 0070 0050A0E3 		mov	r5, #0
+  76:calypso/keypad.c **** 	uint32_t diff = buttons ^ lastbuttons;
+ 163              		.loc 1 76 0
+ 164 0074 088024E0 		eor	r8, r4, r8
+ 165              	.LVL8:
+  78:calypso/keypad.c **** 		if (diff & (1 << btn_map[i])) {
+ 166              		.loc 1 78 0
+ 167 0078 0160A0E3 		mov	r6, #1
+ 168              	.LVL9:
+ 169              	.L16:
+ 170 007c 083097E5 		ldr	r3, [r7, #8]
+ 171 0080 0530D3E7 		ldrb	r3, [r3, r5]	@ zero_extendqisi2
+ 172 0084 1633A0E1 		mov	r3, r6, asl r3
+ 173 0088 080013E1 		tst	r3, r8
+ 174 008c 0400000A 		beq	.L15
+ 175              	.LVL10:
+  80:calypso/keypad.c **** 			emit_key(i, state);
+ 176              		.loc 1 80 0
+ 177 0090 040013E1 		tst	r3, r4
+ 178 0094 0500A0E1 		mov	r0, r5
+ 179 0098 0010A013 		movne	r1, #0
+ 180 009c 0110A003 		moveq	r1, #1
+ 181 00a0 FEFFFFEB 		bl	emit_key
+ 182              	.LVL11:
+ 183              	.L15:
+  77:calypso/keypad.c **** 	for (i = 0; i < BUTTON_CNT; i++) {
+ 184              		.loc 1 77 0
+ 185 00a4 015085E2 		add	r5, r5, #1
+ 186              	.LVL12:
+ 187 00a8 170055E3 		cmp	r5, #23
+ 188 00ac F2FFFF1A 		bne	.L16
+  83:calypso/keypad.c **** 	lastbuttons = buttons;
+ 189              		.loc 1 83 0
+ 190 00b0 04309FE5 		ldr	r3, .L19
+ 191 00b4 0C4083E5 		str	r4, [r3, #12]
+ 192 00b8 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 193              	.L20:
+ 194              		.align	2
+ 195              	.L19:
+ 196 00bc 00000000 		.word	.LANCHOR0
+ 197 00c0 00000000 		.word	jiffies
+ 198              		.cfi_endproc
+ 199              	.LFE14:
+ 201              		.section	.text.keypad_init,"ax",%progbits
+ 202              		.align	2
+ 203              		.global	keypad_init
+ 205              	keypad_init:
+ 206              	.LFB16:
+  95:calypso/keypad.c **** 
+  96:calypso/keypad.c **** void keypad_init(const uint8_t *keymap, uint8_t interrupts)
+  97:calypso/keypad.c **** {
+ 207              		.loc 1 97 0
+ 208              		.cfi_startproc
+ 209              		@ args = 0, pretend = 0, frame = 0
+ 210              		@ frame_needed = 0, uses_anonymous_args = 0
+ 211              	.LVL13:
+  98:calypso/keypad.c **** 	btn_map = keymap;
+ 212              		.loc 1 98 0
+ 213 0000 58309FE5 		ldr	r3, .L23
+  99:calypso/keypad.c **** 	lastbuttons = 0;
+ 100:calypso/keypad.c **** 	polling = 0;
+ 101:calypso/keypad.c **** 	writew(0, KBD_GPIO_MASKIT);
+ 214              		.loc 1 101 0
+ 215 0004 58209FE5 		ldr	r2, .L23+4
+  97:calypso/keypad.c **** {
+ 216              		.loc 1 97 0
+ 217 0008 10402DE9 		stmfd	sp!, {r4, lr}
+ 218              	.LCFI2:
+ 219              		.cfi_def_cfa_offset 8
+ 102:calypso/keypad.c **** 	writew(0, KBC_REG);
+ 103:calypso/keypad.c **** 
+ 104:calypso/keypad.c **** 	if(interrupts) {
+ 220              		.loc 1 104 0
+ 221 000c FF0011E3 		tst	r1, #255
+  99:calypso/keypad.c **** 	lastbuttons = 0;
+ 222              		.loc 1 99 0
+ 223 0010 0040A0E3 		mov	r4, #0
+ 224              		.cfi_offset 14, -4
+ 225              		.cfi_offset 4, -8
+  98:calypso/keypad.c **** 	btn_map = keymap;
+ 226              		.loc 1 98 0
+ 227 0014 080083E5 		str	r0, [r3, #8]
+  99:calypso/keypad.c **** 	lastbuttons = 0;
+ 228              		.loc 1 99 0
+ 229 0018 0C4083E5 		str	r4, [r3, #12]
+ 100:calypso/keypad.c **** 	polling = 0;
+ 230              		.loc 1 100 0
+ 231 001c 0040C3E5 		strb	r4, [r3, #0]
+ 101:calypso/keypad.c **** 	writew(0, KBD_GPIO_MASKIT);
+ 232              		.loc 1 101 0
+ 233 0020 B74E42E1 		strh	r4, [r2, #-231]	@ movhi
+ 102:calypso/keypad.c **** 	writew(0, KBC_REG);
+ 234              		.loc 1 102 0
+ 235 0024 B34F42E1 		strh	r4, [r2, #-243]	@ movhi
+ 236              		.loc 1 104 0
+ 237 0028 1080BD08 		ldmeqfd	sp!, {r4, pc}
+ 105:calypso/keypad.c **** 		with_interrupts = 1;
+ 238              		.loc 1 105 0
+ 239 002c 0120A0E3 		mov	r2, #1
+ 240 0030 1420C3E5 		strb	r2, [r3, #20]
+ 106:calypso/keypad.c **** 		irq_register_handler(IRQ_KEYPAD_GPIO, &keypad_irq);
+ 241              		.loc 1 106 0
+ 242 0034 0800A0E3 		mov	r0, #8
+ 243              	.LVL14:
+ 244 0038 28109FE5 		ldr	r1, .L23+8
+ 245              	.LVL15:
+ 246 003c FEFFFFEB 		bl	irq_register_handler
+ 247              	.LVL16:
+ 107:calypso/keypad.c **** 		irq_config(IRQ_KEYPAD_GPIO, 0, 0, 0);
+ 248              		.loc 1 107 0
+ 249 0040 0800A0E3 		mov	r0, #8
+ 250 0044 0410A0E1 		mov	r1, r4
+ 251 0048 0420A0E1 		mov	r2, r4
+ 252 004c 0430A0E1 		mov	r3, r4
+ 253 0050 FEFFFFEB 		bl	irq_config
+ 108:calypso/keypad.c **** 		irq_enable(IRQ_KEYPAD_GPIO);
+ 254              		.loc 1 108 0
+ 255 0054 0800A0E3 		mov	r0, #8
+ 109:calypso/keypad.c **** 	}
+ 110:calypso/keypad.c **** }
+ 256              		.loc 1 110 0
+ 257 0058 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 108:calypso/keypad.c **** 		irq_enable(IRQ_KEYPAD_GPIO);
+ 258              		.loc 1 108 0
+ 259 005c FEFFFFEA 		b	irq_enable
+ 260              	.L24:
+ 261              		.align	2
+ 262              	.L23:
+ 263 0060 00000000 		.word	.LANCHOR0
+ 264 0064 FF48FEFF 		.word	-112385
+ 265 0068 00000000 		.word	keypad_irq
+ 266              		.cfi_endproc
+ 267              	.LFE16:
+ 269              		.section	.text.keypad_set_handler,"ax",%progbits
+ 270              		.align	2
+ 271              		.global	keypad_set_handler
+ 273              	keypad_set_handler:
+ 274              	.LFB17:
+ 111:calypso/keypad.c **** 
+ 112:calypso/keypad.c **** void keypad_set_handler(key_handler_t handler)
+ 113:calypso/keypad.c **** {
+ 275              		.loc 1 113 0
+ 276              		.cfi_startproc
+ 277              		@ args = 0, pretend = 0, frame = 0
+ 278              		@ frame_needed = 0, uses_anonymous_args = 0
+ 279              		@ link register save eliminated.
+ 280              	.LVL17:
+ 114:calypso/keypad.c **** 	key_handler = handler;
+ 281              		.loc 1 114 0
+ 282 0000 04309FE5 		ldr	r3, .L26
+ 283 0004 040083E5 		str	r0, [r3, #4]
+ 115:calypso/keypad.c **** }
+ 284              		.loc 1 115 0
+ 285 0008 1EFF2FE1 		bx	lr
+ 286              	.L27:
+ 287              		.align	2
+ 288              	.L26:
+ 289 000c 00000000 		.word	.LANCHOR0
+ 290              		.cfi_endproc
+ 291              	.LFE17:
+ 293              		.section	.text.keypad_poll,"ax",%progbits
+ 294              		.align	2
+ 295              		.global	keypad_poll
+ 297              	keypad_poll:
+ 298              	.LFB18:
+ 116:calypso/keypad.c **** 
+ 117:calypso/keypad.c **** void keypad_poll()
+ 118:calypso/keypad.c **** {
+ 299              		.loc 1 118 0
+ 300              		.cfi_startproc
+ 301              		@ args = 0, pretend = 0, frame = 0
+ 302              		@ frame_needed = 0, uses_anonymous_args = 0
+ 303 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 304              	.LCFI3:
+ 305              		.cfi_def_cfa_offset 8
+ 119:calypso/keypad.c **** 	static uint16_t reg;
+ 120:calypso/keypad.c **** 	static uint16_t col;
+ 121:calypso/keypad.c **** 	static uint32_t buttons = 0, debounce1 = 0, debounce2 = 0;
+ 122:calypso/keypad.c **** 
+ 123:calypso/keypad.c **** 	if (with_interrupts && !polling)
+ 306              		.loc 1 123 0
+ 307 0004 60219FE5 		ldr	r2, .L41
+ 308 0008 1430D2E5 		ldrb	r3, [r2, #20]	@ zero_extendqisi2
+ 309 000c 000053E3 		cmp	r3, #0
+ 310 0010 0200000A 		beq	.L29
+ 311              		.cfi_offset 14, -4
+ 312              		.cfi_offset 4, -8
+ 313              		.loc 1 123 0 is_stmt 0 discriminator 1
+ 314 0014 0020D2E5 		ldrb	r2, [r2, #0]	@ zero_extendqisi2
+ 315 0018 000052E3 		cmp	r2, #0
+ 316 001c 1080BD08 		ldmeqfd	sp!, {r4, pc}
+ 317              	.L29:
+ 124:calypso/keypad.c **** 		return;
+ 125:calypso/keypad.c **** 
+ 126:calypso/keypad.c **** 	/* start polling */
+ 127:calypso/keypad.c **** 	if (polling == 1) {
+ 318              		.loc 1 127 0 is_stmt 1
+ 319 0020 44419FE5 		ldr	r4, .L41
+ 320 0024 0020D4E5 		ldrb	r2, [r4, #0]	@ zero_extendqisi2
+ 321 0028 010052E3 		cmp	r2, #1
+ 322 002c 0600001A 		bne	.L31
+ 128:calypso/keypad.c **** 		writew(0x1f & ~0x1, KBC_REG); /* first col */
+ 323              		.loc 1 128 0
+ 324 0030 38319FE5 		ldr	r3, .L41+4
+ 325 0034 1E20A0E3 		mov	r2, #30	@ movhi
+ 326 0038 B32F43E1 		strh	r2, [r3, #-243]	@ movhi
+ 129:calypso/keypad.c **** 		col = 0;
+ 327              		.loc 1 129 0
+ 328 003c 0030A0E3 		mov	r3, #0	@ movhi
+ 329 0040 B631C4E1 		strh	r3, [r4, #22]	@ movhi
+ 130:calypso/keypad.c **** 		polling = 2;
+ 330              		.loc 1 130 0
+ 331 0044 0230A0E3 		mov	r3, #2
+ 332 0048 390000EA 		b	.L40
+ 333              	.L31:
+ 131:calypso/keypad.c **** 		return;
+ 132:calypso/keypad.c **** 	}
+ 133:calypso/keypad.c **** 
+ 134:calypso/keypad.c **** 	/* enable keypad irq after the signal settles */
+ 135:calypso/keypad.c **** 	if (polling == 3) {
+ 334              		.loc 1 135 0
+ 335 004c 030052E3 		cmp	r2, #3
+ 336 0050 0600001A 		bne	.L32
+ 136:calypso/keypad.c **** 		if(with_interrupts) {
+ 337              		.loc 1 136 0
+ 338 0054 000053E3 		cmp	r3, #0
+ 137:calypso/keypad.c **** 			irq_enable(IRQ_KEYPAD_GPIO);
+ 138:calypso/keypad.c **** 			polling = 0;
+ 139:calypso/keypad.c **** 		} else {
+ 140:calypso/keypad.c **** 			polling = 1;
+ 339              		.loc 1 140 0
+ 340 0058 0130A003 		moveq	r3, #1
+ 136:calypso/keypad.c **** 		if(with_interrupts) {
+ 341              		.loc 1 136 0
+ 342 005c 3400000A 		beq	.L40
+ 137:calypso/keypad.c **** 			irq_enable(IRQ_KEYPAD_GPIO);
+ 343              		.loc 1 137 0
+ 344 0060 0800A0E3 		mov	r0, #8
+ 345 0064 FEFFFFEB 		bl	irq_enable
+ 138:calypso/keypad.c **** 			polling = 0;
+ 346              		.loc 1 138 0
+ 347 0068 0030A0E3 		mov	r3, #0
+ 348 006c 300000EA 		b	.L40
+ 349              	.L32:
+ 141:calypso/keypad.c **** 		}
+ 142:calypso/keypad.c **** 		return;
+ 143:calypso/keypad.c **** 	}
+ 144:calypso/keypad.c **** 
+ 145:calypso/keypad.c **** 	reg = readw(KBR_LATCH_REG);
+ 350              		.loc 1 145 0
+ 351 0070 F8309FE5 		ldr	r3, .L41+4
+ 146:calypso/keypad.c **** 	buttons = (buttons & ~(0x1f << (col * 5)))
+ 352              		.loc 1 146 0
+ 353 0074 B621D4E1 		ldrh	r2, [r4, #22]
+ 145:calypso/keypad.c **** 	reg = readw(KBR_LATCH_REG);
+ 354              		.loc 1 145 0
+ 355 0078 B50F53E1 		ldrh	r0, [r3, #-245]
+ 356              		.loc 1 146 0
+ 357 007c 1C3094E5 		ldr	r3, [r4, #28]
+ 358 0080 021182E0 		add	r1, r2, r2, asl #2
+ 359 0084 1FC0A0E3 		mov	ip, #31
+ 360 0088 1CC1C3E1 		bic	ip, r3, ip, asl r1
+ 147:calypso/keypad.c **** 		| ((~reg & 0x1f) << (col * 5 ));
+ 361              		.loc 1 147 0
+ 362 008c 0030E0E1 		mvn	r3, r0
+ 363 0090 1F3003E2 		and	r3, r3, #31
+ 364 0094 13318CE1 		orr	r3, ip, r3, asl r1
+ 145:calypso/keypad.c **** 	reg = readw(KBR_LATCH_REG);
+ 365              		.loc 1 145 0
+ 366 0098 B801C4E1 		strh	r0, [r4, #24]	@ movhi
+ 148:calypso/keypad.c **** 	/* if key is released, stay in column for faster debounce */
+ 149:calypso/keypad.c **** 	if ((debounce1 | debounce2) & ~buttons) {
+ 367              		.loc 1 149 0
+ 368 009c 201094E5 		ldr	r1, [r4, #32]
+ 369 00a0 240094E5 		ldr	r0, [r4, #36]
+ 370 00a4 000081E1 		orr	r0, r1, r0
+ 371 00a8 0300D0E1 		bics	r0, r0, r3
+ 146:calypso/keypad.c **** 	buttons = (buttons & ~(0x1f << (col * 5)))
+ 372              		.loc 1 146 0
+ 373 00ac 1C3084E5 		str	r3, [r4, #28]
+ 150:calypso/keypad.c **** 		debounce2 = debounce1;
+ 374              		.loc 1 150 0
+ 375 00b0 24108415 		strne	r1, [r4, #36]
+ 151:calypso/keypad.c **** 		debounce1 = buttons;
+ 376              		.loc 1 151 0
+ 377 00b4 20308415 		strne	r3, [r4, #32]
+ 149:calypso/keypad.c **** 	if ((debounce1 | debounce2) & ~buttons) {
+ 378              		.loc 1 149 0
+ 379 00b8 1080BD18 		ldmnefd	sp!, {r4, pc}
+ 152:calypso/keypad.c **** 		return;
+ 153:calypso/keypad.c **** 	}
+ 154:calypso/keypad.c **** 
+ 155:calypso/keypad.c **** 	col++;
+ 380              		.loc 1 155 0
+ 381 00bc 012082E2 		add	r2, r2, #1
+ 382 00c0 0228A0E1 		mov	r2, r2, asl #16
+ 383 00c4 2228A0E1 		mov	r2, r2, lsr #16
+ 156:calypso/keypad.c **** 	if (col > 5) {
+ 384              		.loc 1 156 0
+ 385 00c8 050052E3 		cmp	r2, #5
+ 155:calypso/keypad.c **** 	col++;
+ 386              		.loc 1 155 0
+ 387 00cc B621C4E1 		strh	r2, [r4, #22]	@ movhi
+ 388              		.loc 1 156 0
+ 389 00d0 1900009A 		bls	.L35
+ 390              	.LBB3:
+ 157:calypso/keypad.c **** 		uint32_t pwr_mask = (1 << btn_map[KEY_POWER]);
+ 391              		.loc 1 157 0
+ 392 00d4 082094E5 		ldr	r2, [r4, #8]
+ 393 00d8 1420D2E5 		ldrb	r2, [r2, #20]	@ zero_extendqisi2
+ 394 00dc 0110A0E3 		mov	r1, #1
+ 395 00e0 1122A0E1 		mov	r2, r1, asl r2
+ 396              	.LVL18:
+ 158:calypso/keypad.c **** 		col = 0;
+ 159:calypso/keypad.c **** 		/* if power button, ignore other states */
+ 160:calypso/keypad.c **** 		if (buttons & pwr_mask)
+ 397              		.loc 1 160 0
+ 398 00e4 020013E1 		tst	r3, r2
+ 161:calypso/keypad.c **** 			buttons = lastbuttons | pwr_mask;
+ 399              		.loc 1 161 0
+ 400 00e8 0C309415 		ldrne	r3, [r4, #12]
+ 158:calypso/keypad.c **** 		col = 0;
+ 401              		.loc 1 158 0
+ 402 00ec B601C4E1 		strh	r0, [r4, #22]	@ movhi
+ 403              		.loc 1 161 0
+ 404 00f0 03208211 		orrne	r2, r2, r3
+ 405              	.LVL19:
+ 160:calypso/keypad.c **** 		if (buttons & pwr_mask)
+ 406              		.loc 1 160 0
+ 407 00f4 0400001A 		bne	.L39
+ 162:calypso/keypad.c **** 		else if (lastbuttons & pwr_mask)
+ 408              		.loc 1 162 0
+ 409 00f8 0C3094E5 		ldr	r3, [r4, #12]
+ 410 00fc 030012E1 		tst	r2, r3
+ 411 0100 0200000A 		beq	.L37
+ 163:calypso/keypad.c **** 			buttons = lastbuttons & ~pwr_mask;
+ 412              		.loc 1 163 0
+ 413 0104 0C3094E5 		ldr	r3, [r4, #12]
+ 414 0108 0220C3E1 		bic	r2, r3, r2
+ 415              	.L39:
+ 416 010c 1C2084E5 		str	r2, [r4, #28]
+ 417              	.L37:
+ 164:calypso/keypad.c **** 		dispatch_buttons(buttons);
+ 418              		.loc 1 164 0
+ 419 0110 54409FE5 		ldr	r4, .L41
+ 420 0114 1C0094E5 		ldr	r0, [r4, #28]
+ 421 0118 FEFFFFEB 		bl	dispatch_buttons
+ 165:calypso/keypad.c **** 		if (buttons == 0) {
+ 422              		.loc 1 165 0
+ 423 011c 1C3094E5 		ldr	r3, [r4, #28]
+ 424 0120 000053E3 		cmp	r3, #0
+ 425 0124 0400001A 		bne	.L35
+ 166:calypso/keypad.c **** 			writew(0x0, KBC_REG);
+ 426              		.loc 1 166 0
+ 427 0128 40209FE5 		ldr	r2, .L41+4
+ 428 012c B33F42E1 		strh	r3, [r2, #-243]	@ movhi
+ 167:calypso/keypad.c **** 			polling = 3;
+ 429              		.loc 1 167 0
+ 430 0130 033083E2 		add	r3, r3, #3
+ 431              	.L40:
+ 432 0134 0030C4E5 		strb	r3, [r4, #0]
+ 168:calypso/keypad.c **** 			return;
+ 433              		.loc 1 168 0
+ 434 0138 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 435              	.L35:
+ 436              	.LBE3:
+ 169:calypso/keypad.c **** 		}
+ 170:calypso/keypad.c **** 	}
+ 171:calypso/keypad.c **** 	if (col == 5)
+ 437              		.loc 1 171 0
+ 438 013c 28309FE5 		ldr	r3, .L41
+ 439 0140 B631D3E1 		ldrh	r3, [r3, #22]
+ 440 0144 050053E3 		cmp	r3, #5
+ 172:calypso/keypad.c **** 		writew(0xff, KBC_REG);
+ 173:calypso/keypad.c **** 	else
+ 174:calypso/keypad.c **** 		writew(0x1f & ~(0x1 << col ), KBC_REG);
+ 441              		.loc 1 174 0
+ 442 0148 0120A013 		movne	r2, #1
+ 443 014c 1233E011 		mvnne	r3, r2, asl r3
+ 172:calypso/keypad.c **** 		writew(0xff, KBC_REG);
+ 444              		.loc 1 172 0
+ 445 0150 18309F05 		ldreq	r3, .L41+4
+ 446              		.loc 1 174 0
+ 447 0154 14209F15 		ldrne	r2, .L41+4
+ 172:calypso/keypad.c **** 		writew(0xff, KBC_REG);
+ 448              		.loc 1 172 0
+ 449 0158 FF20A003 		moveq	r2, #255	@ movhi
+ 450              		.loc 1 174 0
+ 451 015c 1F300312 		andne	r3, r3, #31
+ 172:calypso/keypad.c **** 		writew(0xff, KBC_REG);
+ 452              		.loc 1 172 0
+ 453 0160 B32F4301 		streqh	r2, [r3, #-243]	@ movhi
+ 454              		.loc 1 174 0
+ 455 0164 B33F4211 		strneh	r3, [r2, #-243]	@ movhi
+ 456 0168 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 457              	.L42:
+ 458              		.align	2
+ 459              	.L41:
+ 460 016c 00000000 		.word	.LANCHOR0
+ 461 0170 FF48FEFF 		.word	-112385
+ 462              		.cfi_endproc
+ 463              	.LFE18:
+ 465              		.global	lastbuttons
+ 466              		.global	power_hold
+ 467              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 468              	.LC0:
+ 469 0000 70726573 		.ascii	"pressed\000"
+ 469      73656400 
+ 470              	.LC1:
+ 471 0008 72656C65 		.ascii	"released\000"
+ 471      61736564 
+ 471      00
+ 472              	.LC2:
+ 473 0011 6B65793D 		.ascii	"key=%u %s\012\000"
+ 473      25752025 
+ 473      730A00
+ 474              		.bss
+ 475              		.align	2
+ 476              		.set	.LANCHOR0,. + 0
+ 479              	polling:
+ 480 0000 00       		.space	1
+ 481 0001 000000   		.space	3
+ 484              	key_handler:
+ 485 0004 00000000 		.space	4
+ 488              	btn_map:
+ 489 0008 00000000 		.space	4
+ 492              	lastbuttons:
+ 493 000c 00000000 		.space	4
+ 496              	power_hold:
+ 497 0010 00000000 		.space	4
+ 500              	with_interrupts:
+ 501 0014 00       		.space	1
+ 502 0015 00       		.space	1
+ 505              	col.1703:
+ 506 0016 0000     		.space	2
+ 509              	reg.1702:
+ 510 0018 0000     		.space	2
+ 511 001a 0000     		.space	2
+ 514              	buttons.1704:
+ 515 001c 00000000 		.space	4
+ 518              	debounce1.1705:
+ 519 0020 00000000 		.space	4
+ 522              	debounce2.1706:
+ 523 0024 00000000 		.space	4
+ 524              		.text
+ 525              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 keypad.c
+     /tmp/ccxMA8jj.s:12     .text.keypad_irq:0000000000000000 $a
+     /tmp/ccxMA8jj.s:14     .text.keypad_irq:0000000000000000 keypad_irq
+     /tmp/ccxMA8jj.s:37     .text.keypad_irq:0000000000000014 $d
+     /tmp/ccxMA8jj.s:42     .text.emit_key:0000000000000000 $a
+     /tmp/ccxMA8jj.s:45     .text.emit_key:0000000000000000 emit_key
+     /tmp/ccxMA8jj.s:87     .text.emit_key:0000000000000048 $d
+     /tmp/ccxMA8jj.s:95     .text.dispatch_buttons:0000000000000000 $a
+     /tmp/ccxMA8jj.s:98     .text.dispatch_buttons:0000000000000000 dispatch_buttons
+     /tmp/ccxMA8jj.s:196    .text.dispatch_buttons:00000000000000bc $d
+     /tmp/ccxMA8jj.s:202    .text.keypad_init:0000000000000000 $a
+     /tmp/ccxMA8jj.s:205    .text.keypad_init:0000000000000000 keypad_init
+     /tmp/ccxMA8jj.s:263    .text.keypad_init:0000000000000060 $d
+     /tmp/ccxMA8jj.s:270    .text.keypad_set_handler:0000000000000000 $a
+     /tmp/ccxMA8jj.s:273    .text.keypad_set_handler:0000000000000000 keypad_set_handler
+     /tmp/ccxMA8jj.s:289    .text.keypad_set_handler:000000000000000c $d
+     /tmp/ccxMA8jj.s:294    .text.keypad_poll:0000000000000000 $a
+     /tmp/ccxMA8jj.s:297    .text.keypad_poll:0000000000000000 keypad_poll
+     /tmp/ccxMA8jj.s:460    .text.keypad_poll:000000000000016c $d
+     /tmp/ccxMA8jj.s:492    .bss:000000000000000c lastbuttons
+     /tmp/ccxMA8jj.s:496    .bss:0000000000000010 power_hold
+     /tmp/ccxMA8jj.s:475    .bss:0000000000000000 $d
+     /tmp/ccxMA8jj.s:479    .bss:0000000000000000 polling
+     /tmp/ccxMA8jj.s:484    .bss:0000000000000004 key_handler
+     /tmp/ccxMA8jj.s:488    .bss:0000000000000008 btn_map
+     /tmp/ccxMA8jj.s:500    .bss:0000000000000014 with_interrupts
+     /tmp/ccxMA8jj.s:505    .bss:0000000000000016 col.1703
+     /tmp/ccxMA8jj.s:509    .bss:0000000000000018 reg.1702
+     /tmp/ccxMA8jj.s:514    .bss:000000000000001c buttons.1704
+     /tmp/ccxMA8jj.s:518    .bss:0000000000000020 debounce1.1705
+     /tmp/ccxMA8jj.s:522    .bss:0000000000000024 debounce2.1706
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+irq_disable
+printf
+twl3025_power_off
+jiffies
+irq_register_handler
+irq_config
+irq_enable

@@ -1,0 +1,1152 @@
+   1              		.file	"cfi_flash.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.ramtext,"ax",%progbits
+  12              		.align	2
+  13              		.global	flash_block_getlock
+  15              	flash_block_getlock:
+  16              	.LFB3:
+  17              		.file 1 "flash/cfi_flash.c"
+   1:flash/cfi_flash.c **** /* NOR Flash Driver for Intel 28F160C3 NOR flash */
+   2:flash/cfi_flash.c **** 
+   3:flash/cfi_flash.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:flash/cfi_flash.c ****  *
+   5:flash/cfi_flash.c ****  * All Rights Reserved
+   6:flash/cfi_flash.c ****  *
+   7:flash/cfi_flash.c ****  * This program is free software; you can redistribute it and/or modify
+   8:flash/cfi_flash.c ****  * it under the terms of the GNU General Public License as published by
+   9:flash/cfi_flash.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:flash/cfi_flash.c ****  * (at your option) any later version.
+  11:flash/cfi_flash.c ****  *
+  12:flash/cfi_flash.c ****  * This program is distributed in the hope that it will be useful,
+  13:flash/cfi_flash.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:flash/cfi_flash.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:flash/cfi_flash.c ****  * GNU General Public License for more details.
+  16:flash/cfi_flash.c ****  *
+  17:flash/cfi_flash.c ****  * You should have received a copy of the GNU General Public License along
+  18:flash/cfi_flash.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:flash/cfi_flash.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:flash/cfi_flash.c ****  *
+  21:flash/cfi_flash.c ****  */
+  22:flash/cfi_flash.c **** 
+  23:flash/cfi_flash.c **** #include <debug.h>
+  24:flash/cfi_flash.c **** #include <stdio.h>
+  25:flash/cfi_flash.c **** #include <stdint.h>
+  26:flash/cfi_flash.c **** #include <errno.h>
+  27:flash/cfi_flash.c **** #include <memory.h>
+  28:flash/cfi_flash.c **** #include <defines.h>
+  29:flash/cfi_flash.c **** #include <flash/cfi_flash.h>
+  30:flash/cfi_flash.c **** 
+  31:flash/cfi_flash.c **** /* XXX: strings must always be in ram */
+  32:flash/cfi_flash.c **** #if 0
+  33:flash/cfi_flash.c **** #define puts(...)
+  34:flash/cfi_flash.c **** #define printf(...)
+  35:flash/cfi_flash.c **** #endif
+  36:flash/cfi_flash.c **** 
+  37:flash/cfi_flash.c **** /* global definitions */
+  38:flash/cfi_flash.c **** #define CFI_FLASH_MAX_ERASE_REGIONS 4
+  39:flash/cfi_flash.c **** 
+  40:flash/cfi_flash.c **** /* structure of erase region descriptor */
+  41:flash/cfi_flash.c **** struct cfi_region {
+  42:flash/cfi_flash.c **** 	uint16_t b_count;
+  43:flash/cfi_flash.c **** 	uint16_t b_size;
+  44:flash/cfi_flash.c **** } __attribute__ ((packed));
+  45:flash/cfi_flash.c **** 
+  46:flash/cfi_flash.c **** /* structure of cfi query response */
+  47:flash/cfi_flash.c **** struct cfi_query {
+  48:flash/cfi_flash.c **** 	uint8_t qry[3];
+  49:flash/cfi_flash.c **** 	uint16_t p_id;
+  50:flash/cfi_flash.c **** 	uint16_t p_adr;
+  51:flash/cfi_flash.c **** 	uint16_t a_id;
+  52:flash/cfi_flash.c **** 	uint16_t a_adr;
+  53:flash/cfi_flash.c **** 	uint8_t vcc_min;
+  54:flash/cfi_flash.c **** 	uint8_t vcc_max;
+  55:flash/cfi_flash.c **** 	uint8_t vpp_min;
+  56:flash/cfi_flash.c **** 	uint8_t vpp_max;
+  57:flash/cfi_flash.c **** 	uint8_t word_write_timeout_typ;
+  58:flash/cfi_flash.c **** 	uint8_t buf_write_timeout_typ;
+  59:flash/cfi_flash.c **** 	uint8_t block_erase_timeout_typ;
+  60:flash/cfi_flash.c **** 	uint8_t chip_erase_timeout_typ;
+  61:flash/cfi_flash.c **** 	uint8_t word_write_timeout_max;
+  62:flash/cfi_flash.c **** 	uint8_t buf_write_timeout_max;
+  63:flash/cfi_flash.c **** 	uint8_t block_erase_timeout_max;
+  64:flash/cfi_flash.c **** 	uint8_t chip_erase_timeout_max;
+  65:flash/cfi_flash.c **** 	uint8_t dev_size;
+  66:flash/cfi_flash.c **** 	uint16_t interface_desc;
+  67:flash/cfi_flash.c **** 	uint16_t max_buf_write_size;
+  68:flash/cfi_flash.c **** 	uint8_t num_erase_regions;
+  69:flash/cfi_flash.c **** 	struct cfi_region erase_regions[CFI_FLASH_MAX_ERASE_REGIONS];
+  70:flash/cfi_flash.c **** } __attribute__ ((packed));
+  71:flash/cfi_flash.c **** 
+  72:flash/cfi_flash.c **** /* manufacturer ids */
+  73:flash/cfi_flash.c **** enum cfi_manuf {
+  74:flash/cfi_flash.c **** 	CFI_MANUF_ST    = 0x0020,
+  75:flash/cfi_flash.c **** 	CFI_MANUF_INTEL = 0x0089,
+  76:flash/cfi_flash.c **** };
+  77:flash/cfi_flash.c **** 
+  78:flash/cfi_flash.c **** /* algorithm ids */
+  79:flash/cfi_flash.c **** enum cfi_algo {
+  80:flash/cfi_flash.c **** 	CFI_ALGO_INTEL_3 = 0x03
+  81:flash/cfi_flash.c **** };
+  82:flash/cfi_flash.c **** 
+  83:flash/cfi_flash.c **** /* various command bytes */
+  84:flash/cfi_flash.c **** enum cfi_flash_cmd {
+  85:flash/cfi_flash.c **** 	CFI_CMD_RESET = 0xff,
+  86:flash/cfi_flash.c **** 	CFI_CMD_READ_ID = 0x90,
+  87:flash/cfi_flash.c **** 	CFI_CMD_CFI = 0x98,
+  88:flash/cfi_flash.c **** 	CFI_CMD_READ_STATUS = 0x70,
+  89:flash/cfi_flash.c **** 	CFI_CMD_CLEAR_STATUS = 0x50,
+  90:flash/cfi_flash.c **** 	CFI_CMD_WRITE = 0x40,
+  91:flash/cfi_flash.c **** 	CFI_CMD_BLOCK_ERASE = 0x20,
+  92:flash/cfi_flash.c **** 	CFI_CMD_ERASE_CONFIRM = 0xD0,
+  93:flash/cfi_flash.c **** 	CFI_CMD_PROTECT = 0x60,
+  94:flash/cfi_flash.c **** };
+  95:flash/cfi_flash.c **** 
+  96:flash/cfi_flash.c **** /* protection commands */
+  97:flash/cfi_flash.c **** enum flash_prot_cmd {
+  98:flash/cfi_flash.c **** 	CFI_PROT_LOCK = 0x01,
+  99:flash/cfi_flash.c **** 	CFI_PROT_UNLOCK = 0xD0,
+ 100:flash/cfi_flash.c **** 	CFI_PROT_LOCKDOWN = 0x2F
+ 101:flash/cfi_flash.c **** };
+ 102:flash/cfi_flash.c **** 
+ 103:flash/cfi_flash.c **** /* offsets from base */
+ 104:flash/cfi_flash.c **** enum flash_offset {
+ 105:flash/cfi_flash.c **** 	CFI_OFFSET_MANUFACTURER_ID = 0x00,
+ 106:flash/cfi_flash.c **** 	CFI_OFFSET_DEVICE_ID = 0x01,
+ 107:flash/cfi_flash.c **** 	CFI_OFFSET_INTEL_PROTECTION = 0x81,
+ 108:flash/cfi_flash.c **** 	CFI_OFFSET_CFI_RESP = 0x10
+ 109:flash/cfi_flash.c **** };
+ 110:flash/cfi_flash.c **** 
+ 111:flash/cfi_flash.c **** /* offsets from block base */
+ 112:flash/cfi_flash.c **** enum flash_block_offset {
+ 113:flash/cfi_flash.c **** 	CFI_OFFSET_BLOCK_LOCKSTATE = 0x02
+ 114:flash/cfi_flash.c **** };
+ 115:flash/cfi_flash.c **** 
+ 116:flash/cfi_flash.c **** /* status masks */
+ 117:flash/cfi_flash.c **** enum flash_status {
+ 118:flash/cfi_flash.c **** 	CFI_STATUS_READY = 0x80,
+ 119:flash/cfi_flash.c **** 	CFI_STATUS_ERASE_SUSPENDED = 0x40,
+ 120:flash/cfi_flash.c **** 	CFI_STATUS_ERASE_ERROR = 0x20,
+ 121:flash/cfi_flash.c **** 	CFI_STATUS_PROGRAM_ERROR = 0x10,
+ 122:flash/cfi_flash.c **** 	CFI_STATUS_VPP_LOW = 0x08,
+ 123:flash/cfi_flash.c **** 	CFI_STATUS_PROGRAM_SUSPENDED = 0x04,
+ 124:flash/cfi_flash.c **** 	CFI_STATUS_LOCKED_ERROR = 0x02,
+ 125:flash/cfi_flash.c **** 	CFI_STATUS_RESERVED = 0x01
+ 126:flash/cfi_flash.c **** };
+ 127:flash/cfi_flash.c **** 
+ 128:flash/cfi_flash.c **** __ramtext
+ 129:flash/cfi_flash.c **** static inline void flash_write_cmd(const void *base_addr, uint16_t cmd)
+ 130:flash/cfi_flash.c **** {
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 132:flash/cfi_flash.c **** }
+ 133:flash/cfi_flash.c **** 
+ 134:flash/cfi_flash.c **** __ramtext
+ 135:flash/cfi_flash.c **** static inline uint16_t flash_read16(const void *base_addr, uint32_t offset)
+ 136:flash/cfi_flash.c **** {
+ 137:flash/cfi_flash.c **** 	return readw(base_addr + (offset << 1));
+ 138:flash/cfi_flash.c **** }
+ 139:flash/cfi_flash.c **** 
+ 140:flash/cfi_flash.c **** __ramtext
+ 141:flash/cfi_flash.c **** static char flash_protected(uint32_t block_offset)
+ 142:flash/cfi_flash.c **** {
+ 143:flash/cfi_flash.c **** #ifdef CONFIG_FLASH_WRITE
+ 144:flash/cfi_flash.c **** #  ifdef CONFIG_FLASH_WRITE_LOADER
+ 145:flash/cfi_flash.c **** 	return 0;
+ 146:flash/cfi_flash.c **** #  else
+ 147:flash/cfi_flash.c **** 	return block_offset <= 0xFFFF;
+ 148:flash/cfi_flash.c **** #  endif
+ 149:flash/cfi_flash.c **** #else
+ 150:flash/cfi_flash.c **** 	return 1;
+ 151:flash/cfi_flash.c **** #endif
+ 152:flash/cfi_flash.c **** }
+ 153:flash/cfi_flash.c **** 
+ 154:flash/cfi_flash.c **** __ramtext
+ 155:flash/cfi_flash.c **** flash_lock_t flash_block_getlock(flash_t * flash, uint32_t block_offset)
+ 156:flash/cfi_flash.c **** {
+  18              		.loc 1 156 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  24              	.LBB95:
+  25              	.LBB96:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+  26              		.loc 1 131 0
+  27 0000 003090E5 		ldr	r3, [r0, #0]
+  28 0004 9020A0E3 		mov	r2, #144	@ movhi
+  29 0008 B020C3E1 		strh	r2, [r3, #0]	@ movhi
+  30              	.LVL1:
+  31              	.LBE96:
+  32              	.LBE95:
+ 157:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 158:flash/cfi_flash.c **** 
+ 159:flash/cfi_flash.c **** 	uint8_t lockstate;
+ 160:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_READ_ID);
+ 161:flash/cfi_flash.c **** 	lockstate =
+ 162:flash/cfi_flash.c **** 		flash_read16(base_addr,
+  33              		.loc 1 162 0
+  34 000c 0110C1E3 		bic	r1, r1, #1
+  35              	.LVL2:
+  36              	.LBB97:
+  37              	.LBB98:
+ 137:flash/cfi_flash.c **** 	return readw(base_addr + (offset << 1));
+  38              		.loc 1 137 0
+  39 0010 041081E2 		add	r1, r1, #4
+  40 0014 B10093E1 		ldrh	r0, [r3, r1]
+  41              	.LVL3:
+  42              	.LBE98:
+  43              	.LBE97:
+  44              	.LBB99:
+  45              	.LBB100:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+  46              		.loc 1 131 0
+  47 0018 FF20A0E3 		mov	r2, #255	@ movhi
+  48              	.LBE100:
+  49              	.LBE99:
+ 163:flash/cfi_flash.c **** 			     (block_offset >> 1) + CFI_OFFSET_BLOCK_LOCKSTATE);
+ 164:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 165:flash/cfi_flash.c **** 
+ 166:flash/cfi_flash.c **** 	if (lockstate & 0x2) {
+  50              		.loc 1 166 0
+  51 001c 020010E3 		tst	r0, #2
+  52              	.LBB102:
+  53              	.LBB101:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+  54              		.loc 1 131 0
+  55 0020 B020C3E1 		strh	r2, [r3, #0]	@ movhi
+  56              	.LBE101:
+  57              	.LBE102:
+ 167:flash/cfi_flash.c **** 		return FLASH_LOCKED_DOWN;
+ 168:flash/cfi_flash.c **** 	} else if (lockstate & 0x01) {
+  58              		.loc 1 168 0
+  59 0024 01000002 		andeq	r0, r0, #1
+  60              	.LVL4:
+ 167:flash/cfi_flash.c **** 		return FLASH_LOCKED_DOWN;
+  61              		.loc 1 167 0
+  62 0028 0200A013 		movne	r0, #2
+ 169:flash/cfi_flash.c **** 		return FLASH_LOCKED;
+ 170:flash/cfi_flash.c **** 	} else {
+ 171:flash/cfi_flash.c **** 		return FLASH_UNLOCKED;
+ 172:flash/cfi_flash.c **** 	}
+ 173:flash/cfi_flash.c **** }
+  63              		.loc 1 173 0
+  64 002c 1EFF2FE1 		bx	lr
+  65              		.cfi_endproc
+  66              	.LFE3:
+  68              		.align	2
+  69              		.global	flash_block_unlock
+  71              	flash_block_unlock:
+  72              	.LFB4:
+ 174:flash/cfi_flash.c **** 
+ 175:flash/cfi_flash.c **** __ramtext
+ 176:flash/cfi_flash.c **** int flash_block_unlock(flash_t * flash, uint32_t block_offset)
+ 177:flash/cfi_flash.c **** {
+  73              		.loc 1 177 0
+  74              		.cfi_startproc
+  75              		@ args = 0, pretend = 0, frame = 0
+  76              		@ frame_needed = 0, uses_anonymous_args = 0
+  77              		@ link register save eliminated.
+  78              	.LVL5:
+ 178:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 179:flash/cfi_flash.c **** 
+ 180:flash/cfi_flash.c **** 	if (block_offset >= flash->f_size) {
+  79              		.loc 1 180 0
+  80 0030 043090E5 		ldr	r3, [r0, #4]
+  81 0034 030051E1 		cmp	r1, r3
+ 181:flash/cfi_flash.c **** 		return -EINVAL;
+ 182:flash/cfi_flash.c **** 	}
+ 183:flash/cfi_flash.c **** 
+ 184:flash/cfi_flash.c **** 	if (flash_protected(block_offset)) {
+ 185:flash/cfi_flash.c **** 		return -EPERM;
+ 186:flash/cfi_flash.c **** 	}
+ 187:flash/cfi_flash.c **** 
+ 188:flash/cfi_flash.c **** 	printf("Unlocking block at 0x%08lx, meaning %p\n",
+ 189:flash/cfi_flash.c **** 		   block_offset, base_addr + block_offset);
+ 190:flash/cfi_flash.c **** 
+ 191:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_PROTECT);
+ 192:flash/cfi_flash.c **** 	flash_write_cmd(base_addr + block_offset, CFI_PROT_UNLOCK);
+ 193:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 194:flash/cfi_flash.c **** 
+ 195:flash/cfi_flash.c **** 	return 0;
+ 196:flash/cfi_flash.c **** }
+  82              		.loc 1 196 0
+  83 0038 0000E033 		mvncc	r0, #0
+  84 003c 1500E023 		mvncs	r0, #21
+  85              	.LVL6:
+  86 0040 1EFF2FE1 		bx	lr
+  87              		.cfi_endproc
+  88              	.LFE4:
+  90              		.align	2
+  91              		.global	flash_block_lock
+  93              	flash_block_lock:
+  94              	.LFB5:
+ 197:flash/cfi_flash.c **** 
+ 198:flash/cfi_flash.c **** __ramtext
+ 199:flash/cfi_flash.c **** int flash_block_lock(flash_t * flash, uint32_t block_offset)
+ 200:flash/cfi_flash.c **** {
+  95              		.loc 1 200 0
+  96              		.cfi_startproc
+  97              		@ args = 0, pretend = 0, frame = 0
+  98              		@ frame_needed = 0, uses_anonymous_args = 0
+  99              	.LVL7:
+ 201:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 202:flash/cfi_flash.c **** 
+ 203:flash/cfi_flash.c **** 	if (block_offset >= flash->f_size) {
+ 100              		.loc 1 203 0
+ 101 0044 043090E5 		ldr	r3, [r0, #4]
+ 102 0048 030051E1 		cmp	r1, r3
+ 200:flash/cfi_flash.c **** {
+ 103              		.loc 1 200 0
+ 104 004c 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 105              	.LCFI0:
+ 106              		.cfi_def_cfa_offset 12
+ 200:flash/cfi_flash.c **** {
+ 107              		.loc 1 200 0
+ 108 0050 0150A0E1 		mov	r5, r1
+ 109              		.cfi_offset 14, -4
+ 110              		.cfi_offset 5, -8
+ 111              		.cfi_offset 4, -12
+ 201:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 112              		.loc 1 201 0
+ 113 0054 004090E5 		ldr	r4, [r0, #0]
+ 114              	.LVL8:
+ 115              		.loc 1 203 0
+ 116 0058 0900002A 		bcs	.L9
+ 117              	.LVL9:
+ 204:flash/cfi_flash.c **** 		return -EINVAL;
+ 205:flash/cfi_flash.c **** 	}
+ 206:flash/cfi_flash.c **** 
+ 207:flash/cfi_flash.c **** 	printf("Locking block at 0x%08lx\n", block_offset);
+ 118              		.loc 1 207 0
+ 119 005c 28009FE5 		ldr	r0, .L10
+ 120              	.LVL10:
+ 121 0060 FEFFFFEB 		bl	printf
+ 122              	.LVL11:
+ 123              	.LBB103:
+ 124              	.LBB104:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 125              		.loc 1 131 0
+ 126 0064 6030A0E3 		mov	r3, #96	@ movhi
+ 127 0068 B030C4E1 		strh	r3, [r4, #0]	@ movhi
+ 128              	.LVL12:
+ 129              	.LBE104:
+ 130              	.LBE103:
+ 131              	.LBB105:
+ 132              	.LBB106:
+ 133 006c 0130A0E3 		mov	r3, #1	@ movhi
+ 134 0070 B53084E1 		strh	r3, [r4, r5]	@ movhi
+ 135              	.LVL13:
+ 136              	.LBE106:
+ 137              	.LBE105:
+ 138              	.LBB107:
+ 139              	.LBB108:
+ 140 0074 FF30A0E3 		mov	r3, #255	@ movhi
+ 141 0078 B030C4E1 		strh	r3, [r4, #0]	@ movhi
+ 142              	.LBE108:
+ 143              	.LBE107:
+ 208:flash/cfi_flash.c **** 
+ 209:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_PROTECT);
+ 210:flash/cfi_flash.c **** 	flash_write_cmd(base_addr + block_offset, CFI_PROT_LOCK);
+ 211:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 212:flash/cfi_flash.c **** 
+ 213:flash/cfi_flash.c **** 	return 0;
+ 144              		.loc 1 213 0
+ 145 007c 0000A0E3 		mov	r0, #0
+ 146 0080 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 147              	.LVL14:
+ 148              	.L9:
+ 204:flash/cfi_flash.c **** 		return -EINVAL;
+ 149              		.loc 1 204 0
+ 150 0084 1500E0E3 		mvn	r0, #21
+ 151              	.LVL15:
+ 214:flash/cfi_flash.c **** }
+ 152              		.loc 1 214 0
+ 153 0088 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 154              	.L11:
+ 155              		.align	2
+ 156              	.L10:
+ 157 008c 00000000 		.word	.LC0
+ 158              		.cfi_endproc
+ 159              	.LFE5:
+ 161              		.align	2
+ 162              		.global	flash_block_lockdown
+ 164              	flash_block_lockdown:
+ 165              	.LFB6:
+ 215:flash/cfi_flash.c **** 
+ 216:flash/cfi_flash.c **** __ramtext
+ 217:flash/cfi_flash.c **** int flash_block_lockdown(flash_t * flash, uint32_t block_offset)
+ 218:flash/cfi_flash.c **** {
+ 166              		.loc 1 218 0
+ 167              		.cfi_startproc
+ 168              		@ args = 0, pretend = 0, frame = 0
+ 169              		@ frame_needed = 0, uses_anonymous_args = 0
+ 170              	.LVL16:
+ 219:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 220:flash/cfi_flash.c **** 
+ 221:flash/cfi_flash.c **** 	if (block_offset >= flash->f_size) {
+ 171              		.loc 1 221 0
+ 172 0090 043090E5 		ldr	r3, [r0, #4]
+ 173 0094 030051E1 		cmp	r1, r3
+ 218:flash/cfi_flash.c **** {
+ 174              		.loc 1 218 0
+ 175 0098 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 176              	.LCFI1:
+ 177              		.cfi_def_cfa_offset 12
+ 218:flash/cfi_flash.c **** {
+ 178              		.loc 1 218 0
+ 179 009c 0150A0E1 		mov	r5, r1
+ 180              		.cfi_offset 14, -4
+ 181              		.cfi_offset 5, -8
+ 182              		.cfi_offset 4, -12
+ 219:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 183              		.loc 1 219 0
+ 184 00a0 004090E5 		ldr	r4, [r0, #0]
+ 185              	.LVL17:
+ 186              		.loc 1 221 0
+ 187 00a4 0900002A 		bcs	.L14
+ 222:flash/cfi_flash.c **** 		return -EINVAL;
+ 223:flash/cfi_flash.c **** 	}
+ 224:flash/cfi_flash.c **** 
+ 225:flash/cfi_flash.c **** 	printf("Locking down block at 0x%08lx\n", block_offset);
+ 188              		.loc 1 225 0
+ 189 00a8 28009FE5 		ldr	r0, .L15
+ 190              	.LVL18:
+ 191 00ac FEFFFFEB 		bl	printf
+ 192              	.LVL19:
+ 193              	.LBB109:
+ 194              	.LBB110:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 195              		.loc 1 131 0
+ 196 00b0 6030A0E3 		mov	r3, #96	@ movhi
+ 197 00b4 B030C4E1 		strh	r3, [r4, #0]	@ movhi
+ 198              	.LVL20:
+ 199              	.LBE110:
+ 200              	.LBE109:
+ 201              	.LBB111:
+ 202              	.LBB112:
+ 203 00b8 2F30A0E3 		mov	r3, #47	@ movhi
+ 204 00bc B53084E1 		strh	r3, [r4, r5]	@ movhi
+ 205              	.LVL21:
+ 206              	.LBE112:
+ 207              	.LBE111:
+ 208              	.LBB113:
+ 209              	.LBB114:
+ 210 00c0 FF30A0E3 		mov	r3, #255	@ movhi
+ 211 00c4 B030C4E1 		strh	r3, [r4, #0]	@ movhi
+ 212              	.LBE114:
+ 213              	.LBE113:
+ 226:flash/cfi_flash.c **** 
+ 227:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_PROTECT);
+ 228:flash/cfi_flash.c **** 	flash_write_cmd(base_addr + block_offset, CFI_PROT_LOCKDOWN);
+ 229:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 230:flash/cfi_flash.c **** 
+ 231:flash/cfi_flash.c **** 	return 0;
+ 214              		.loc 1 231 0
+ 215 00c8 0000A0E3 		mov	r0, #0
+ 216 00cc 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 217              	.LVL22:
+ 218              	.L14:
+ 222:flash/cfi_flash.c **** 		return -EINVAL;
+ 219              		.loc 1 222 0
+ 220 00d0 1500E0E3 		mvn	r0, #21
+ 221              	.LVL23:
+ 232:flash/cfi_flash.c **** }
+ 222              		.loc 1 232 0
+ 223 00d4 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 224              	.L16:
+ 225              		.align	2
+ 226              	.L15:
+ 227 00d8 1A000000 		.word	.LC1
+ 228              		.cfi_endproc
+ 229              	.LFE6:
+ 231              		.align	2
+ 232              		.global	flash_block_erase
+ 234              	flash_block_erase:
+ 235              	.LFB7:
+ 233:flash/cfi_flash.c **** 
+ 234:flash/cfi_flash.c **** __ramtext
+ 235:flash/cfi_flash.c **** int flash_block_erase(flash_t * flash, uint32_t block_offset)
+ 236:flash/cfi_flash.c **** {
+ 236              		.loc 1 236 0
+ 237              		.cfi_startproc
+ 238              		@ args = 0, pretend = 0, frame = 0
+ 239              		@ frame_needed = 0, uses_anonymous_args = 0
+ 240              		@ link register save eliminated.
+ 241              	.LVL24:
+ 237:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 238:flash/cfi_flash.c **** 
+ 239:flash/cfi_flash.c **** 	if (block_offset >= flash->f_size) {
+ 242              		.loc 1 239 0
+ 243 00dc 043090E5 		ldr	r3, [r0, #4]
+ 244 00e0 030051E1 		cmp	r1, r3
+ 240:flash/cfi_flash.c **** 		return -EINVAL;
+ 241:flash/cfi_flash.c **** 	}
+ 242:flash/cfi_flash.c **** 
+ 243:flash/cfi_flash.c **** 	if (flash_protected(block_offset)) {
+ 244:flash/cfi_flash.c **** 		return -EPERM;
+ 245:flash/cfi_flash.c **** 	}
+ 246:flash/cfi_flash.c **** 
+ 247:flash/cfi_flash.c **** 	printf("Erasing block 0x%08lx...", block_offset);
+ 248:flash/cfi_flash.c **** 
+ 249:flash/cfi_flash.c **** 	void *block_addr = ((uint8_t *) base_addr) + block_offset;
+ 250:flash/cfi_flash.c **** 
+ 251:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_CLEAR_STATUS);
+ 252:flash/cfi_flash.c **** 
+ 253:flash/cfi_flash.c **** 	flash_write_cmd(block_addr, CFI_CMD_BLOCK_ERASE);
+ 254:flash/cfi_flash.c **** 	flash_write_cmd(block_addr, CFI_CMD_ERASE_CONFIRM);
+ 255:flash/cfi_flash.c **** 
+ 256:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_READ_STATUS);
+ 257:flash/cfi_flash.c **** 	uint16_t status;
+ 258:flash/cfi_flash.c **** 	do {
+ 259:flash/cfi_flash.c **** 		status = flash_read16(base_addr, 0);
+ 260:flash/cfi_flash.c **** 	} while (!(status & CFI_STATUS_READY));
+ 261:flash/cfi_flash.c **** 
+ 262:flash/cfi_flash.c **** 	int res = 0;
+ 263:flash/cfi_flash.c **** 	if (status & CFI_STATUS_ERASE_ERROR) {
+ 264:flash/cfi_flash.c **** 		puts("error: ");
+ 265:flash/cfi_flash.c **** 		if (status & CFI_STATUS_VPP_LOW) {
+ 266:flash/cfi_flash.c **** 			puts("vpp insufficient\n");
+ 267:flash/cfi_flash.c **** 			res = -EFAULT;
+ 268:flash/cfi_flash.c **** 		} else if (status & CFI_STATUS_LOCKED_ERROR) {
+ 269:flash/cfi_flash.c **** 			puts("block is lock-protected\n");
+ 270:flash/cfi_flash.c **** 			res = -EPERM;
+ 271:flash/cfi_flash.c **** 		} else {
+ 272:flash/cfi_flash.c **** 			puts("unknown fault\n");
+ 273:flash/cfi_flash.c **** 			res = -EFAULT;
+ 274:flash/cfi_flash.c **** 		}
+ 275:flash/cfi_flash.c **** 	} else {
+ 276:flash/cfi_flash.c **** 		puts("done\n");
+ 277:flash/cfi_flash.c **** 	}
+ 278:flash/cfi_flash.c **** 
+ 279:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 280:flash/cfi_flash.c **** 
+ 281:flash/cfi_flash.c **** 	return res;
+ 282:flash/cfi_flash.c **** 
+ 283:flash/cfi_flash.c **** }
+ 245              		.loc 1 283 0
+ 246 00e4 0000E033 		mvncc	r0, #0
+ 247 00e8 1500E023 		mvncs	r0, #21
+ 248              	.LVL25:
+ 249 00ec 1EFF2FE1 		bx	lr
+ 250              		.cfi_endproc
+ 251              	.LFE7:
+ 253              		.align	2
+ 254              		.global	flash_program
+ 256              	flash_program:
+ 257              	.LFB8:
+ 284:flash/cfi_flash.c **** 
+ 285:flash/cfi_flash.c **** __ramtext
+ 286:flash/cfi_flash.c **** int flash_program(flash_t * flash, uint32_t dst, void *src, uint32_t nbytes)
+ 287:flash/cfi_flash.c **** {
+ 258              		.loc 1 287 0
+ 259              		.cfi_startproc
+ 260              		@ args = 0, pretend = 0, frame = 0
+ 261              		@ frame_needed = 0, uses_anonymous_args = 0
+ 262              		@ link register save eliminated.
+ 263              	.LVL26:
+ 288:flash/cfi_flash.c **** 	const void *base_addr = flash->f_base;
+ 289:flash/cfi_flash.c **** 	int res = 0;
+ 290:flash/cfi_flash.c **** 	uint32_t i;
+ 291:flash/cfi_flash.c **** 
+ 292:flash/cfi_flash.c **** 	/* check destination bounds */
+ 293:flash/cfi_flash.c **** 	if (dst >= flash->f_size) {
+ 264              		.loc 1 293 0
+ 265 00f0 040090E5 		ldr	r0, [r0, #4]
+ 266              	.LVL27:
+ 267 00f4 000051E1 		cmp	r1, r0
+ 268 00f8 0900002A 		bcs	.L23
+ 294:flash/cfi_flash.c **** 		return -EINVAL;
+ 295:flash/cfi_flash.c **** 	}
+ 296:flash/cfi_flash.c **** 	if (dst + nbytes > flash->f_size) {
+ 269              		.loc 1 296 0
+ 270 00fc 01C083E0 		add	ip, r3, r1
+ 271 0100 00005CE1 		cmp	ip, r0
+ 272 0104 0600008A 		bhi	.L23
+ 286:flash/cfi_flash.c **** int flash_program(flash_t * flash, uint32_t dst, void *src, uint32_t nbytes)
+ 273              		.loc 1 286 0
+ 274 0108 011082E1 		orr	r1, r2, r1
+ 275              	.LVL28:
+ 297:flash/cfi_flash.c **** 		return -EINVAL;
+ 298:flash/cfi_flash.c **** 	}
+ 299:flash/cfi_flash.c **** 
+ 300:flash/cfi_flash.c **** 	/* check alignments */
+ 301:flash/cfi_flash.c **** 	if (((uint32_t) src) % 2) {
+ 302:flash/cfi_flash.c **** 		return -EINVAL;
+ 303:flash/cfi_flash.c **** 	}
+ 304:flash/cfi_flash.c **** 	if (dst % 2) {
+ 276              		.loc 1 304 0
+ 277 010c 010011E3 		tst	r1, #1
+ 278 0110 0500001A 		bne	.L24
+ 305:flash/cfi_flash.c **** 		return -EINVAL;
+ 306:flash/cfi_flash.c **** 	}
+ 307:flash/cfi_flash.c **** 	if (nbytes % 2) {
+ 279              		.loc 1 307 0
+ 280 0114 010013E3 		tst	r3, #1
+ 308:flash/cfi_flash.c **** 		return -EINVAL;
+ 281              		.loc 1 308 0
+ 282 0118 0000E003 		mvneq	r0, #0
+ 283 011c 1500E013 		mvnne	r0, #21
+ 284 0120 1EFF2FE1 		bx	lr
+ 285              	.LVL29:
+ 286              	.L23:
+ 297:flash/cfi_flash.c **** 		return -EINVAL;
+ 287              		.loc 1 297 0
+ 288 0124 1500E0E3 		mvn	r0, #21
+ 289 0128 1EFF2FE1 		bx	lr
+ 290              	.LVL30:
+ 291              	.L24:
+ 305:flash/cfi_flash.c **** 		return -EINVAL;
+ 292              		.loc 1 305 0
+ 293 012c 1500E0E3 		mvn	r0, #21
+ 309:flash/cfi_flash.c **** 	}
+ 310:flash/cfi_flash.c **** 
+ 311:flash/cfi_flash.c **** 	/* check permissions */
+ 312:flash/cfi_flash.c **** 	if (flash_protected(dst)) {
+ 313:flash/cfi_flash.c **** 		return -EPERM;
+ 314:flash/cfi_flash.c **** 	}
+ 315:flash/cfi_flash.c **** 
+ 316:flash/cfi_flash.c **** 	/* say something */
+ 317:flash/cfi_flash.c **** 	printf("Programming %lu bytes to 0x%08lx from 0x%p...", nbytes, dst, src);
+ 318:flash/cfi_flash.c **** 
+ 319:flash/cfi_flash.c **** 	/* clear status register */
+ 320:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_CLEAR_STATUS);
+ 321:flash/cfi_flash.c **** 
+ 322:flash/cfi_flash.c **** 	/* write the words */
+ 323:flash/cfi_flash.c **** 	puts("writing...");
+ 324:flash/cfi_flash.c **** 	for (i = 0; i < nbytes; i += 2) {
+ 325:flash/cfi_flash.c **** 		uint16_t *src_addr = (uint16_t *) (src + i);
+ 326:flash/cfi_flash.c **** 		uint16_t *dst_addr = (uint16_t *) (base_addr + dst + i);
+ 327:flash/cfi_flash.c **** 
+ 328:flash/cfi_flash.c **** 		uint16_t data = *src_addr;
+ 329:flash/cfi_flash.c **** 
+ 330:flash/cfi_flash.c **** 		flash_write_cmd(dst_addr, CFI_CMD_WRITE);
+ 331:flash/cfi_flash.c **** 		flash_write_cmd(dst_addr, data);
+ 332:flash/cfi_flash.c **** 
+ 333:flash/cfi_flash.c **** 		flash_write_cmd(base_addr, CFI_CMD_READ_STATUS);
+ 334:flash/cfi_flash.c **** 		uint16_t status;
+ 335:flash/cfi_flash.c **** 		do {
+ 336:flash/cfi_flash.c **** 			status = flash_read16(base_addr, 0);
+ 337:flash/cfi_flash.c **** 		} while (!(status & CFI_STATUS_READY));
+ 338:flash/cfi_flash.c **** 
+ 339:flash/cfi_flash.c **** 		if (status & CFI_STATUS_PROGRAM_ERROR) {
+ 340:flash/cfi_flash.c **** 			puts("error: ");
+ 341:flash/cfi_flash.c **** 			if (status & CFI_STATUS_VPP_LOW) {
+ 342:flash/cfi_flash.c **** 				puts("vpp insufficient");
+ 343:flash/cfi_flash.c **** 				res = -EFAULT;
+ 344:flash/cfi_flash.c **** 			} else if (status & CFI_STATUS_LOCKED_ERROR) {
+ 345:flash/cfi_flash.c **** 				puts("block is lock-protected");
+ 346:flash/cfi_flash.c **** 				res = -EPERM;
+ 347:flash/cfi_flash.c **** 			} else {
+ 348:flash/cfi_flash.c **** 				puts("unknown fault");
+ 349:flash/cfi_flash.c **** 				res = -EFAULT;
+ 350:flash/cfi_flash.c **** 			}
+ 351:flash/cfi_flash.c **** 			goto err_reset;
+ 352:flash/cfi_flash.c **** 		}
+ 353:flash/cfi_flash.c **** 	}
+ 354:flash/cfi_flash.c **** 
+ 355:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 356:flash/cfi_flash.c **** 
+ 357:flash/cfi_flash.c **** 	/* verify the result */
+ 358:flash/cfi_flash.c **** 	puts("verifying...");
+ 359:flash/cfi_flash.c **** 	for (i = 0; i < nbytes; i += 2) {
+ 360:flash/cfi_flash.c **** 		uint16_t *src_addr = (uint16_t *) (src + i);
+ 361:flash/cfi_flash.c **** 		uint16_t *dst_addr = (uint16_t *) (base_addr + dst + i);
+ 362:flash/cfi_flash.c **** 		if (*src_addr != *dst_addr) {
+ 363:flash/cfi_flash.c **** 			puts("error: verification failed");
+ 364:flash/cfi_flash.c **** 			res = -EFAULT;
+ 365:flash/cfi_flash.c **** 			goto err;
+ 366:flash/cfi_flash.c **** 		}
+ 367:flash/cfi_flash.c **** 	}
+ 368:flash/cfi_flash.c **** 
+ 369:flash/cfi_flash.c **** 	puts("done\n");
+ 370:flash/cfi_flash.c **** 
+ 371:flash/cfi_flash.c **** 	return res;
+ 372:flash/cfi_flash.c **** 
+ 373:flash/cfi_flash.c ****  err_reset:
+ 374:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 375:flash/cfi_flash.c **** 
+ 376:flash/cfi_flash.c ****  err:
+ 377:flash/cfi_flash.c **** 	printf(" at offset 0x%lx\n", i);
+ 378:flash/cfi_flash.c **** 
+ 379:flash/cfi_flash.c **** 	return res;
+ 380:flash/cfi_flash.c **** }
+ 294              		.loc 1 380 0
+ 295 0130 1EFF2FE1 		bx	lr
+ 296              		.cfi_endproc
+ 297              	.LFE8:
+ 299              		.align	2
+ 300              		.global	flash_init
+ 302              	flash_init:
+ 303              	.LFB11:
+ 381:flash/cfi_flash.c **** 
+ 382:flash/cfi_flash.c **** /* Internal: retrieve manufacturer and device id from id space */
+ 383:flash/cfi_flash.c **** __ramtext
+ 384:flash/cfi_flash.c **** static int get_id(void *base_addr,
+ 385:flash/cfi_flash.c **** 		  uint16_t * manufacturer_id, uint16_t * device_id)
+ 386:flash/cfi_flash.c **** {
+ 387:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_READ_ID);
+ 388:flash/cfi_flash.c **** 
+ 389:flash/cfi_flash.c **** 	*manufacturer_id = flash_read16(base_addr, CFI_OFFSET_MANUFACTURER_ID);
+ 390:flash/cfi_flash.c **** 	*device_id = flash_read16(base_addr, CFI_OFFSET_DEVICE_ID);
+ 391:flash/cfi_flash.c **** 
+ 392:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 393:flash/cfi_flash.c **** 
+ 394:flash/cfi_flash.c **** 	return 0;
+ 395:flash/cfi_flash.c **** }
+ 396:flash/cfi_flash.c **** 
+ 397:flash/cfi_flash.c **** /* Internal: retrieve cfi query response data */
+ 398:flash/cfi_flash.c **** __ramtext
+ 399:flash/cfi_flash.c **** static int get_query(void *base_addr, struct cfi_query *query)
+ 400:flash/cfi_flash.c **** {
+ 401:flash/cfi_flash.c **** 	int res = 0;
+ 402:flash/cfi_flash.c **** 	unsigned int i;
+ 403:flash/cfi_flash.c **** 
+ 404:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_CFI);
+ 405:flash/cfi_flash.c **** 
+ 406:flash/cfi_flash.c **** 	for (i = 0; i < sizeof(struct cfi_query); i++) {
+ 407:flash/cfi_flash.c **** 		uint16_t byte =
+ 408:flash/cfi_flash.c **** 			flash_read16(base_addr, CFI_OFFSET_CFI_RESP + i);
+ 409:flash/cfi_flash.c **** 		*(((volatile unsigned char *)query) + i) = byte;
+ 410:flash/cfi_flash.c **** 	}
+ 411:flash/cfi_flash.c **** 
+ 412:flash/cfi_flash.c **** 	if (query->qry[0] != 'Q' || query->qry[1] != 'R' || query->qry[2] != 'Y') {
+ 413:flash/cfi_flash.c **** 		res = -ENOENT;
+ 414:flash/cfi_flash.c **** 	}
+ 415:flash/cfi_flash.c **** 
+ 416:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 417:flash/cfi_flash.c **** 
+ 418:flash/cfi_flash.c **** 	return res;
+ 419:flash/cfi_flash.c **** }
+ 420:flash/cfi_flash.c **** 
+ 421:flash/cfi_flash.c **** #if 0
+ 422:flash/cfi_flash.c **** 
+ 423:flash/cfi_flash.c **** /* Internal: retrieve intel protection data */
+ 424:flash/cfi_flash.c **** __ramtext
+ 425:flash/cfi_flash.c **** static int get_intel_protection(void *base_addr,
+ 426:flash/cfi_flash.c **** 				uint16_t * lockp, uint8_t protp[8])
+ 427:flash/cfi_flash.c **** {
+ 428:flash/cfi_flash.c **** 	int i;
+ 429:flash/cfi_flash.c **** 
+ 430:flash/cfi_flash.c **** 	/* check args */
+ 431:flash/cfi_flash.c **** 	if (!lockp) {
+ 432:flash/cfi_flash.c **** 		return -EINVAL;
+ 433:flash/cfi_flash.c **** 	}
+ 434:flash/cfi_flash.c **** 	if (!protp) {
+ 435:flash/cfi_flash.c **** 		return -EINVAL;
+ 436:flash/cfi_flash.c **** 	}
+ 437:flash/cfi_flash.c **** 
+ 438:flash/cfi_flash.c **** 	/* enter read id mode */
+ 439:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_READ_ID);
+ 440:flash/cfi_flash.c **** 
+ 441:flash/cfi_flash.c **** 	/* get lock */
+ 442:flash/cfi_flash.c **** 	*lockp = flash_read16(base_addr, CFI_OFFSET_INTEL_PROTECTION);
+ 443:flash/cfi_flash.c **** 
+ 444:flash/cfi_flash.c **** 	/* get data */
+ 445:flash/cfi_flash.c **** 	for (i = 0; i < 8; i++) {
+ 446:flash/cfi_flash.c **** 		protp[i] = flash_read16(base_addr, CFI_OFFSET_INTEL_PROTECTION + 1 + i);
+ 447:flash/cfi_flash.c **** 	}
+ 448:flash/cfi_flash.c **** 
+ 449:flash/cfi_flash.c **** 	/* leave read id mode */
+ 450:flash/cfi_flash.c **** 	flash_write_cmd(base_addr, CFI_CMD_RESET);
+ 451:flash/cfi_flash.c **** 
+ 452:flash/cfi_flash.c **** 	return 0;
+ 453:flash/cfi_flash.c **** }
+ 454:flash/cfi_flash.c **** 
+ 455:flash/cfi_flash.c **** static void dump_intel_protection(uint16_t lock, uint8_t data[8])
+ 456:flash/cfi_flash.c **** {
+ 457:flash/cfi_flash.c **** 	printf
+ 458:flash/cfi_flash.c **** 		("  protection lock 0x%4.4x data 0x%2.2x%2.2x%2.2x%2.2x%2.2x%2.2x%2.2x%2.2x\n",
+ 459:flash/cfi_flash.c **** 		 lock, data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+ 460:flash/cfi_flash.c **** }
+ 461:flash/cfi_flash.c **** 
+ 462:flash/cfi_flash.c **** static void dump_query_algorithms(struct cfi_query *qry)
+ 463:flash/cfi_flash.c **** {
+ 464:flash/cfi_flash.c **** 	printf("  primary algorithm 0x%4.4x\n", qry->p_id);
+ 465:flash/cfi_flash.c **** 	printf("  primary extended query 0x%4.4x\n", qry->p_adr);
+ 466:flash/cfi_flash.c **** 	printf("  alternate algorithm 0x%4.4x\n", qry->a_id);
+ 467:flash/cfi_flash.c **** 	printf("  alternate extended query 0x%4.4x\n", qry->a_adr);
+ 468:flash/cfi_flash.c **** }
+ 469:flash/cfi_flash.c **** 
+ 470:flash/cfi_flash.c **** static void dump_query_timing(struct cfi_query *qry)
+ 471:flash/cfi_flash.c **** {
+ 472:flash/cfi_flash.c **** 	uint32_t block_erase_typ = 1 << qry->block_erase_timeout_typ;
+ 473:flash/cfi_flash.c **** 	uint32_t block_erase_max =
+ 474:flash/cfi_flash.c **** 		(1 << qry->block_erase_timeout_max) * block_erase_typ;
+ 475:flash/cfi_flash.c **** 	uint32_t word_program_typ = 1 << qry->word_write_timeout_typ;
+ 476:flash/cfi_flash.c **** 	uint32_t word_program_max =
+ 477:flash/cfi_flash.c **** 		(1 << qry->word_write_timeout_max) * word_program_typ;
+ 478:flash/cfi_flash.c **** 	printf("  block erase typ %u ms\n", block_erase_typ);
+ 479:flash/cfi_flash.c **** 	printf("  block erase max %u ms\n", block_erase_max);
+ 480:flash/cfi_flash.c **** 	printf("  word program typ %u us\n", word_program_typ);
+ 481:flash/cfi_flash.c **** 	printf("  word program max %u us\n", word_program_max);
+ 482:flash/cfi_flash.c **** }
+ 483:flash/cfi_flash.c **** 
+ 484:flash/cfi_flash.c **** void flash_dump_info(flash_t * flash)
+ 485:flash/cfi_flash.c **** {
+ 486:flash/cfi_flash.c **** 	int i;
+ 487:flash/cfi_flash.c **** 	printf("flash at 0x%p of %d bytes with %d regions\n",
+ 488:flash/cfi_flash.c **** 		   flash->f_base, flash->f_size, flash->f_nregions);
+ 489:flash/cfi_flash.c **** 
+ 490:flash/cfi_flash.c **** 	uint16_t m_id, d_id;
+ 491:flash/cfi_flash.c **** 	if (get_id(flash->f_base, &m_id, &d_id)) {
+ 492:flash/cfi_flash.c **** 		puts("  failed to get id\n");
+ 493:flash/cfi_flash.c **** 	} else {
+ 494:flash/cfi_flash.c **** 		printf("  manufacturer 0x%4.4x device 0x%4.4x\n", m_id, d_id);
+ 495:flash/cfi_flash.c **** 	}
+ 496:flash/cfi_flash.c **** 
+ 497:flash/cfi_flash.c **** 	uint16_t plock;
+ 498:flash/cfi_flash.c **** 	uint8_t pdata[8];
+ 499:flash/cfi_flash.c **** 	if (get_intel_protection(flash->f_base, &plock, pdata)) {
+ 500:flash/cfi_flash.c **** 		puts("  failed to get protection data\n");
+ 501:flash/cfi_flash.c **** 	} else {
+ 502:flash/cfi_flash.c **** 		dump_intel_protection(plock, pdata);
+ 503:flash/cfi_flash.c **** 	}
+ 504:flash/cfi_flash.c **** 
+ 505:flash/cfi_flash.c **** 	struct cfi_query qry;
+ 506:flash/cfi_flash.c **** 	if (get_query(flash->f_base, &qry)) {
+ 507:flash/cfi_flash.c **** 		puts("  failed to get cfi query response\n");
+ 508:flash/cfi_flash.c **** 	} else {
+ 509:flash/cfi_flash.c **** 		dump_query_algorithms(&qry);
+ 510:flash/cfi_flash.c **** 		dump_query_timing(&qry);
+ 511:flash/cfi_flash.c **** 	}
+ 512:flash/cfi_flash.c **** 
+ 513:flash/cfi_flash.c **** 	for (i = 0; i < flash->f_nregions; i++) {
+ 514:flash/cfi_flash.c **** 		flash_region_t *fr = &flash->f_regions[i];
+ 515:flash/cfi_flash.c **** 		printf("  region %d: %d blocks of %d bytes at 0x%p\n",
+ 516:flash/cfi_flash.c **** 			   i, fr->fr_bnum, fr->fr_bsize, fr->fr_base);
+ 517:flash/cfi_flash.c **** 	}
+ 518:flash/cfi_flash.c **** }
+ 519:flash/cfi_flash.c **** 
+ 520:flash/cfi_flash.c **** #endif
+ 521:flash/cfi_flash.c **** 
+ 522:flash/cfi_flash.c **** __ramtext
+ 523:flash/cfi_flash.c **** int flash_init(flash_t * flash, void *base_addr)
+ 524:flash/cfi_flash.c **** {
+ 304              		.loc 1 524 0
+ 305              		.cfi_startproc
+ 306              		@ args = 0, pretend = 0, frame = 48
+ 307              		@ frame_needed = 0, uses_anonymous_args = 0
+ 308              	.LVL31:
+ 309              	.LBB115:
+ 310              	.LBB118:
+ 311              	.LBB119:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 312              		.loc 1 131 0
+ 313 0134 9020A0E3 		mov	r2, #144	@ movhi
+ 314              	.LBE119:
+ 315              	.LBE118:
+ 316              	.LBE115:
+ 317              		.loc 1 524 0
+ 318 0138 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 319              	.LCFI2:
+ 320              		.cfi_def_cfa_offset 16
+ 321              	.LBB128:
+ 322              	.LBB121:
+ 323              	.LBB120:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 324              		.loc 1 131 0
+ 325 013c B020C1E1 		strh	r2, [r1, #0]	@ movhi
+ 326              	.LVL32:
+ 327              	.LBE120:
+ 328              	.LBE121:
+ 329              	.LBB122:
+ 330              	.LBB123:
+ 137:flash/cfi_flash.c **** 	return readw(base_addr + (offset << 1));
+ 331              		.loc 1 137 0
+ 332 0140 B030D1E1 		ldrh	r3, [r1, #0]
+ 333              	.LVL33:
+ 334              	.LBE123:
+ 335              	.LBE122:
+ 336              	.LBB124:
+ 337              	.LBB125:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 338              		.loc 1 131 0
+ 339 0144 FF50A0E3 		mov	r5, #255	@ movhi
+ 340              		.cfi_offset 14, -4
+ 341              		.cfi_offset 6, -8
+ 342              		.cfi_offset 5, -12
+ 343              		.cfi_offset 4, -16
+ 344              	.LBE125:
+ 345              	.LBE124:
+ 346              	.LBE128:
+ 525:flash/cfi_flash.c **** 	int res;
+ 526:flash/cfi_flash.c **** 	unsigned u;
+ 527:flash/cfi_flash.c **** 	uint16_t m_id, d_id;
+ 528:flash/cfi_flash.c **** 	uint32_t base;
+ 529:flash/cfi_flash.c **** 	struct cfi_query qry;
+ 530:flash/cfi_flash.c **** 
+ 531:flash/cfi_flash.c **** 	/* retrieve and check manufacturer and device id */
+ 532:flash/cfi_flash.c **** 	res = get_id(base_addr, &m_id, &d_id);
+ 533:flash/cfi_flash.c **** 	if (res) {
+ 534:flash/cfi_flash.c **** 		return res;
+ 535:flash/cfi_flash.c **** 	}
+ 536:flash/cfi_flash.c **** 	if (m_id != CFI_MANUF_INTEL && m_id != CFI_MANUF_ST) {
+ 347              		.loc 1 536 0
+ 348 0148 200053E3 		cmp	r3, #32
+ 349 014c 89005313 		cmpne	r3, #137
+ 350              	.LBB129:
+ 351              	.LBB116:
+ 352              	.LBB117:
+ 137:flash/cfi_flash.c **** 	return readw(base_addr + (offset << 1));
+ 353              		.loc 1 137 0
+ 354 0150 B220D1E1 		ldrh	r2, [r1, #2]
+ 355              	.LVL34:
+ 356              	.LBE117:
+ 357              	.LBE116:
+ 358              	.LBE129:
+ 524:flash/cfi_flash.c **** {
+ 359              		.loc 1 524 0
+ 360 0154 30D04DE2 		sub	sp, sp, #48
+ 361              	.LCFI3:
+ 362              		.cfi_def_cfa_offset 64
+ 363              	.LBB130:
+ 364              	.LBB127:
+ 365              	.LBB126:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 366              		.loc 1 131 0
+ 367 0158 B050C1E1 		strh	r5, [r1, #0]	@ movhi
+ 368              	.LBE126:
+ 369              	.LBE127:
+ 370              	.LBE130:
+ 371              		.loc 1 536 0
+ 372 015c 3E00001A 		bne	.L37
+ 373              	.LVL35:
+ 374              	.LBB131:
+ 375              	.LBB132:
+ 376              	.LBB140:
+ 377              	.LBB141:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 378              		.loc 1 131 0
+ 379 0160 9820A0E3 		mov	r2, #152	@ movhi
+ 380 0164 B020C1E1 		strh	r2, [r1, #0]	@ movhi
+ 381              	.LVL36:
+ 382 0168 1030A0E3 		mov	r3, #16
+ 383              	.LVL37:
+ 537:flash/cfi_flash.c **** 		return -ENOTSUP;
+ 538:flash/cfi_flash.c **** 	}
+ 539:flash/cfi_flash.c **** 
+ 540:flash/cfi_flash.c **** 	/* retrieve and check query response */
+ 541:flash/cfi_flash.c **** 	res = get_query(base_addr, &qry);
+ 384              		.loc 1 541 0
+ 385 016c 0D20A0E1 		mov	r2, sp
+ 386              	.LVL38:
+ 387              	.L28:
+ 388              	.LBE141:
+ 389              	.LBE140:
+ 390              	.LBB137:
+ 391              	.LBB138:
+ 392              	.LBB139:
+ 137:flash/cfi_flash.c **** 	return readw(base_addr + (offset << 1));
+ 393              		.loc 1 137 0
+ 394 0170 83C0A0E1 		mov	ip, r3, asl #1
+ 395 0174 BCC091E1 		ldrh	ip, [r1, ip]
+ 396              	.LBE139:
+ 397              	.LBE138:
+ 409:flash/cfi_flash.c **** 		*(((volatile unsigned char *)query) + i) = byte;
+ 398              		.loc 1 409 0
+ 399 0178 013083E2 		add	r3, r3, #1
+ 400              	.LVL39:
+ 401 017c FFC00CE2 		and	ip, ip, #255
+ 402              	.LBE137:
+ 406:flash/cfi_flash.c **** 	for (i = 0; i < sizeof(struct cfi_query); i++) {
+ 403              		.loc 1 406 0
+ 404 0180 3D0053E3 		cmp	r3, #61
+ 405              	.LBB136:
+ 409:flash/cfi_flash.c **** 		*(((volatile unsigned char *)query) + i) = byte;
+ 406              		.loc 1 409 0
+ 407 0184 01C0C2E4 		strb	ip, [r2], #1
+ 408              	.LBE136:
+ 406:flash/cfi_flash.c **** 	for (i = 0; i < sizeof(struct cfi_query); i++) {
+ 409              		.loc 1 406 0
+ 410 0188 F8FFFF1A 		bne	.L28
+ 412:flash/cfi_flash.c **** 	if (query->qry[0] != 'Q' || query->qry[1] != 'R' || query->qry[2] != 'Y') {
+ 411              		.loc 1 412 0
+ 412 018c 0030DDE5 		ldrb	r3, [sp, #0]	@ zero_extendqisi2
+ 413              	.LVL40:
+ 414 0190 510053E3 		cmp	r3, #81
+ 415 0194 0700001A 		bne	.L34
+ 416 0198 0130DDE5 		ldrb	r3, [sp, #1]	@ zero_extendqisi2
+ 417 019c 520053E3 		cmp	r3, #82
+ 418 01a0 0400001A 		bne	.L34
+ 419 01a4 0230DDE5 		ldrb	r3, [sp, #2]	@ zero_extendqisi2
+ 401:flash/cfi_flash.c **** 	int res = 0;
+ 420              		.loc 1 401 0
+ 421 01a8 590053E3 		cmp	r3, #89
+ 422 01ac 0130E013 		mvnne	r3, #1
+ 423 01b0 0030A003 		moveq	r3, #0
+ 424 01b4 000000EA 		b	.L29
+ 425              	.L34:
+ 413:flash/cfi_flash.c **** 		res = -ENOENT;
+ 426              		.loc 1 413 0
+ 427 01b8 0130E0E3 		mvn	r3, #1
+ 428              	.L29:
+ 429              	.LVL41:
+ 430              	.LBB133:
+ 431              	.LBB134:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 432              		.loc 1 131 0
+ 433 01bc FF50A0E3 		mov	r5, #255	@ movhi
+ 434              	.LBE134:
+ 435              	.LBE133:
+ 436              	.LBE132:
+ 437              	.LBE131:
+ 542:flash/cfi_flash.c **** 	if (res) {
+ 438              		.loc 1 542 0
+ 439 01c0 000053E3 		cmp	r3, #0
+ 440              	.LBB144:
+ 441              	.LBB143:
+ 442              	.LBB142:
+ 443              	.LBB135:
+ 131:flash/cfi_flash.c **** 	writew(cmd, base_addr);
+ 444              		.loc 1 131 0
+ 445 01c4 B050C1E1 		strh	r5, [r1, #0]	@ movhi
+ 446              	.LBE135:
+ 447              	.LBE142:
+ 448              	.LBE143:
+ 449              	.LBE144:
+ 450              		.loc 1 542 0
+ 451 01c8 2400001A 		bne	.L27
+ 543:flash/cfi_flash.c **** 		return res;
+ 544:flash/cfi_flash.c **** 	}
+ 545:flash/cfi_flash.c **** 	if (qry.p_id != CFI_ALGO_INTEL_3) {
+ 452              		.loc 1 545 0
+ 453 01cc 0320DDE5 		ldrb	r2, [sp, #3]	@ zero_extendqisi2
+ 454 01d0 04C0DDE5 		ldrb	ip, [sp, #4]	@ zero_extendqisi2
+ 455 01d4 0C2482E1 		orr	r2, r2, ip, asl #8
+ 456 01d8 030052E3 		cmp	r2, #3
+ 457 01dc 1E00001A 		bne	.L37
+ 546:flash/cfi_flash.c **** 		/* we only support algo 3 */
+ 547:flash/cfi_flash.c **** 		return -ENOTSUP;
+ 548:flash/cfi_flash.c **** 	}
+ 549:flash/cfi_flash.c **** 	if (qry.num_erase_regions > FLASH_MAX_REGIONS) {
+ 458              		.loc 1 549 0
+ 459 01e0 1CC0DDE5 		ldrb	ip, [sp, #28]	@ zero_extendqisi2
+ 460 01e4 04005CE3 		cmp	ip, #4
+ 461 01e8 1B00008A 		bhi	.L37
+ 550:flash/cfi_flash.c **** 		/* we have a hard limit on the number of regions */
+ 551:flash/cfi_flash.c **** 		return -ENOTSUP;
+ 552:flash/cfi_flash.c **** 	}
+ 553:flash/cfi_flash.c **** 
+ 554:flash/cfi_flash.c **** 	/* fill in basic information */
+ 555:flash/cfi_flash.c **** 	flash->f_base = base_addr;
+ 556:flash/cfi_flash.c **** 	flash->f_size = 1 << qry.dev_size;
+ 462              		.loc 1 556 0
+ 463 01ec 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 555:flash/cfi_flash.c **** 	flash->f_base = base_addr;
+ 464              		.loc 1 555 0
+ 465 01f0 001080E5 		str	r1, [r0, #0]
+ 466              		.loc 1 556 0
+ 467 01f4 0110A0E3 		mov	r1, #1
+ 468              	.LVL42:
+ 469 01f8 1122A0E1 		mov	r2, r1, asl r2
+ 557:flash/cfi_flash.c **** 
+ 558:flash/cfi_flash.c **** 	/* determine number of erase regions */
+ 559:flash/cfi_flash.c **** 	flash->f_nregions = qry.num_erase_regions;
+ 470              		.loc 1 559 0
+ 471              	.LVL43:
+ 472 01fc 041080E9 		stmib	r0, {r2, ip}	@ phole stm
+ 560:flash/cfi_flash.c **** 
+ 561:flash/cfi_flash.c **** 	/* compute actual erase region info from cfi junk */
+ 562:flash/cfi_flash.c **** 	base = 0;
+ 473              		.loc 1 562 0
+ 474 0200 0310A0E1 		mov	r1, r3
+ 563:flash/cfi_flash.c **** 	for (u = 0; u < flash->f_nregions; u++) {
+ 475              		.loc 1 563 0
+ 476 0204 0320A0E1 		mov	r2, r3
+ 477 0208 100000EA 		b	.L30
+ 478              	.LVL44:
+ 479              	.L31:
+ 480              	.LBB145:
+ 564:flash/cfi_flash.c **** 		flash_region_t *fr = &flash->f_regions[u];
+ 565:flash/cfi_flash.c **** 
+ 566:flash/cfi_flash.c **** 		fr->fr_base = (void *)base;
+ 481              		.loc 1 566 0 discriminator 2
+ 482 020c 0C1080E5 		str	r1, [r0, #12]
+ 567:flash/cfi_flash.c **** 		fr->fr_bnum = qry.erase_regions[u].b_count + 1;
+ 483              		.loc 1 567 0 discriminator 2
+ 484 0210 074082E2 		add	r4, r2, #7
+ 485 0214 30508DE2 		add	r5, sp, #48
+ 486 0218 044185E0 		add	r4, r5, r4, asl #2
+ 487 021c 305014E5 		ldr	r5, [r4, #-48]
+ 488 0220 0554A0E1 		mov	r5, r5, asl #8
+ 489 0224 2558A0E1 		mov	r5, r5, lsr #16
+ 490 0228 015085E2 		add	r5, r5, #1
+ 491 022c 105080E5 		str	r5, [r0, #16]
+ 568:flash/cfi_flash.c **** 		fr->fr_bsize = qry.erase_regions[u].b_size * 256;
+ 492              		.loc 1 568 0 discriminator 2
+ 493 0230 2D6054E5 		ldrb	r6, [r4, #-45]	@ zero_extendqisi2
+ 494 0234 2C4054E5 		ldrb	r4, [r4, #-44]	@ zero_extendqisi2
+ 495 0238 044486E1 		orr	r4, r6, r4, asl #8
+ 496 023c 0444A0E1 		mov	r4, r4, asl #8
+ 569:flash/cfi_flash.c **** 
+ 570:flash/cfi_flash.c **** 		base += fr->fr_bnum * fr->fr_bsize;
+ 497              		.loc 1 570 0 discriminator 2
+ 498 0240 951421E0 		mla	r1, r5, r4, r1
+ 499              	.LVL45:
+ 568:flash/cfi_flash.c **** 		fr->fr_bsize = qry.erase_regions[u].b_size * 256;
+ 500              		.loc 1 568 0 discriminator 2
+ 501 0244 144080E5 		str	r4, [r0, #20]
+ 502              	.LBE145:
+ 563:flash/cfi_flash.c **** 	for (u = 0; u < flash->f_nregions; u++) {
+ 503              		.loc 1 563 0 discriminator 2
+ 504 0248 012082E2 		add	r2, r2, #1
+ 505              	.LVL46:
+ 506 024c 0C0080E2 		add	r0, r0, #12
+ 507              	.LVL47:
+ 508              	.L30:
+ 563:flash/cfi_flash.c **** 	for (u = 0; u < flash->f_nregions; u++) {
+ 509              		.loc 1 563 0 is_stmt 0 discriminator 1
+ 510 0250 0C0052E1 		cmp	r2, ip
+ 511 0254 ECFFFF3A 		bcc	.L31
+ 512 0258 000000EA 		b	.L27
+ 513              	.LVL48:
+ 514              	.L37:
+ 551:flash/cfi_flash.c **** 		return -ENOTSUP;
+ 515              		.loc 1 551 0 is_stmt 1
+ 516 025c 8530E0E3 		mvn	r3, #133
+ 517              	.LVL49:
+ 518              	.L27:
+ 571:flash/cfi_flash.c **** 	}
+ 572:flash/cfi_flash.c **** 
+ 573:flash/cfi_flash.c **** 	return 0;
+ 574:flash/cfi_flash.c **** }
+ 519              		.loc 1 574 0
+ 520 0260 0300A0E1 		mov	r0, r3
+ 521 0264 30D08DE2 		add	sp, sp, #48
+ 522 0268 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 523              		.cfi_endproc
+ 524              	.LFE11:
+ 526              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 527              	.LC0:
+ 528 0000 4C6F636B 		.ascii	"Locking block at 0x%08lx\012\000"
+ 528      696E6720 
+ 528      626C6F63 
+ 528      6B206174 
+ 528      20307825 
+ 529              	.LC1:
+ 530 001a 4C6F636B 		.ascii	"Locking down block at 0x%08lx\012\000"
+ 530      696E6720 
+ 530      646F776E 
+ 530      20626C6F 
+ 530      636B2061 
+ 531              		.text
+ 532              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 cfi_flash.c
+     /tmp/ccLzNgqG.s:12     .ramtext:0000000000000000 $a
+     /tmp/ccLzNgqG.s:15     .ramtext:0000000000000000 flash_block_getlock
+     /tmp/ccLzNgqG.s:71     .ramtext:0000000000000030 flash_block_unlock
+     /tmp/ccLzNgqG.s:93     .ramtext:0000000000000044 flash_block_lock
+     /tmp/ccLzNgqG.s:157    .ramtext:000000000000008c $d
+     /tmp/ccLzNgqG.s:161    .ramtext:0000000000000090 $a
+     /tmp/ccLzNgqG.s:164    .ramtext:0000000000000090 flash_block_lockdown
+     /tmp/ccLzNgqG.s:227    .ramtext:00000000000000d8 $d
+     /tmp/ccLzNgqG.s:231    .ramtext:00000000000000dc $a
+     /tmp/ccLzNgqG.s:234    .ramtext:00000000000000dc flash_block_erase
+     /tmp/ccLzNgqG.s:256    .ramtext:00000000000000f0 flash_program
+     /tmp/ccLzNgqG.s:302    .ramtext:0000000000000134 flash_init
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+printf

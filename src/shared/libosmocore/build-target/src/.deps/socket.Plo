@@ -1,0 +1,3 @@
+socket.lo: ../../src/socket.c ../config.h
+
+../config.h:

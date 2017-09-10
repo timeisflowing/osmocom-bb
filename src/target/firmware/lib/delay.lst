@@ -1,0 +1,119 @@
+   1              		.file	"delay.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.delay_us,"ax",%progbits
+  12              		.align	2
+  13              		.global	delay_us
+  15              	delay_us:
+  16              	.LFB0:
+  17              		.file 1 "lib/delay.c"
+   1:lib/delay.c   **** #include <delay.h>
+   2:lib/delay.c   **** 
+   3:lib/delay.c   **** /* FIXME: We need properly calibrated delay loops at some point! */
+   4:lib/delay.c   **** void delay_us(unsigned int us)
+   5:lib/delay.c   **** {
+  18              		.loc 1 5 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 4
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  24 0000 04D04DE2 		sub	sp, sp, #4
+  25              	.LCFI0:
+  26              		.cfi_def_cfa_offset 4
+   6:lib/delay.c   **** 	volatile unsigned int i;
+   7:lib/delay.c   **** 
+   8:lib/delay.c   **** 	for (i= 0; i < us*4; i++) { i; }
+  27              		.loc 1 8 0
+  28 0004 0030A0E3 		mov	r3, #0
+  29 0008 00308DE5 		str	r3, [sp, #0]
+  30              	.LVL1:
+  31 000c 0001A0E1 		mov	r0, r0, asl #2
+  32              	.LVL2:
+  33 0010 030000EA 		b	.L2
+  34              	.L3:
+  35              		.loc 1 8 0 is_stmt 0 discriminator 2
+  36 0014 00309DE5 		ldr	r3, [sp, #0]
+  37 0018 00309DE5 		ldr	r3, [sp, #0]
+  38 001c 013083E2 		add	r3, r3, #1
+  39              	.LVL3:
+  40 0020 00308DE5 		str	r3, [sp, #0]
+  41              	.LVL4:
+  42              	.L2:
+  43              		.loc 1 8 0 discriminator 1
+  44 0024 00309DE5 		ldr	r3, [sp, #0]
+  45              	.LVL5:
+  46 0028 000053E1 		cmp	r3, r0
+  47 002c F8FFFF3A 		bcc	.L3
+   9:lib/delay.c   **** }
+  48              		.loc 1 9 0 is_stmt 1
+  49 0030 04D08DE2 		add	sp, sp, #4
+  50 0034 1EFF2FE1 		bx	lr
+  51              		.cfi_endproc
+  52              	.LFE0:
+  54              		.section	.text.delay_ms,"ax",%progbits
+  55              		.align	2
+  56              		.global	delay_ms
+  58              	delay_ms:
+  59              	.LFB1:
+  10:lib/delay.c   **** 
+  11:lib/delay.c   **** void delay_ms(unsigned int ms)
+  12:lib/delay.c   **** {
+  60              		.loc 1 12 0
+  61              		.cfi_startproc
+  62              		@ args = 0, pretend = 0, frame = 4
+  63              		@ frame_needed = 0, uses_anonymous_args = 0
+  64              		@ link register save eliminated.
+  65              	.LVL6:
+  13:lib/delay.c   **** 	volatile unsigned int i;
+  14:lib/delay.c   **** 
+  15:lib/delay.c   **** 	for (i= 0; i < ms*1300; i++) { i; }
+  66              		.loc 1 15 0
+  67 0000 0030A0E3 		mov	r3, #0
+  12:lib/delay.c   **** {
+  68              		.loc 1 12 0
+  69 0004 04D04DE2 		sub	sp, sp, #4
+  70              	.LCFI1:
+  71              		.cfi_def_cfa_offset 4
+  72              		.loc 1 15 0
+  73 0008 00308DE5 		str	r3, [sp, #0]
+  74              	.LVL7:
+  75 000c 28309FE5 		ldr	r3, .L7
+  76 0010 900303E0 		mul	r3, r0, r3
+  77 0014 030000EA 		b	.L5
+  78              	.L6:
+  79              		.loc 1 15 0 is_stmt 0 discriminator 2
+  80 0018 00209DE5 		ldr	r2, [sp, #0]
+  81 001c 00209DE5 		ldr	r2, [sp, #0]
+  82 0020 012082E2 		add	r2, r2, #1
+  83              	.LVL8:
+  84 0024 00208DE5 		str	r2, [sp, #0]
+  85              	.LVL9:
+  86              	.L5:
+  87              		.loc 1 15 0 discriminator 1
+  88 0028 00209DE5 		ldr	r2, [sp, #0]
+  89              	.LVL10:
+  90 002c 030052E1 		cmp	r2, r3
+  91 0030 F8FFFF3A 		bcc	.L6
+  16:lib/delay.c   **** }
+  92              		.loc 1 16 0 is_stmt 1
+  93 0034 04D08DE2 		add	sp, sp, #4
+  94 0038 1EFF2FE1 		bx	lr
+  95              	.L8:
+  96              		.align	2
+  97              	.L7:
+  98 003c 14050000 		.word	1300
+  99              		.cfi_endproc
+ 100              	.LFE1:
+ 102              		.text
+ 103              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 delay.c
+     /tmp/ccphWQ2p.s:12     .text.delay_us:0000000000000000 $a
+     /tmp/ccphWQ2p.s:15     .text.delay_us:0000000000000000 delay_us
+     /tmp/ccphWQ2p.s:55     .text.delay_ms:0000000000000000 $a
+     /tmp/ccphWQ2p.s:58     .text.delay_ms:0000000000000000 delay_ms
+     /tmp/ccphWQ2p.s:98     .text.delay_ms:000000000000003c $d
+                     .debug_frame:0000000000000010 $d
+
+NO UNDEFINED SYMBOLS
