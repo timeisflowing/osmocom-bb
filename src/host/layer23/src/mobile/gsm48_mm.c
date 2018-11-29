@@ -39,7 +39,9 @@
 #include <osmocom/bb/mobile/gsm480_ss.h>
 #include <osmocom/bb/mobile/gsm411_sms.h>
 #include <osmocom/bb/mobile/app_mobile.h>
+#include <osmocom/bb/mobile/primitives.h>
 #include <osmocom/bb/mobile/vty.h>
+#include <osmocom/bb/common/utils.h>
 
 extern void *l23_ctx;
 
@@ -264,10 +266,7 @@ static int decode_network_name(char *name, int name_len,
 	length = ((in_len - 1) * 8 - padding) / 7;
 	if (length <= 0)
 		return 0;
-	if (length >= name_len)
-		length = name_len - 1;
-	gsm_7bit_decode(name, lv + 2, length);
-	name[length] = '\0';
+	gsm_7bit_decode_n(name, name_len, lv + 2, length);
 
 	return length;
 }
@@ -964,6 +963,7 @@ static void new_mm_state(struct gsm48_mmlayer *mm, int state, int substate)
 
 	mm->state = state;
 	mm->substate = substate;
+	mobile_prim_ntfy_mm_status(ms, mm->state, mm->substate, mm->mr_substate);
 
 	/* resend detach event, if flag is set */
 	if (state == GSM48_MM_ST_MM_IDLE && mm->delay_detach) {
@@ -1852,7 +1852,7 @@ static int gsm48_mm_imsi_detach_end(struct osmocom_ms *ms, struct msgb *msg)
 	subscr->sim_valid = 0;
 
 	/* wait for RR idle and then power off when IMSI is detached */
-	if (ms->shutdown) {
+	if (ms->shutdown != MS_SHUTDOWN_NONE) {
 		if (mm->state == GSM48_MM_ST_MM_IDLE) {
 			mobile_exit(ms, 1);
 			return 0;
@@ -1947,7 +1947,7 @@ static int gsm48_mm_imsi_detach_release(struct osmocom_ms *ms, struct msgb *msg)
 		new_mm_state(mm, GSM48_MM_ST_WAIT_NETWORK_CMD, 0);
 
 		/* power off */
-		if (ms->shutdown) {
+		if (ms->shutdown != MS_SHUTDOWN_NONE) {
 			mobile_exit(ms, 1);
 			return 0;
 		}
@@ -2100,7 +2100,7 @@ static int gsm48_mm_sysinfo(struct osmocom_ms *ms, struct msgb *msg)
 			mm->t3212.timeout.tv_sec = current_time.tv_sec
 				+ (t % s->t3212);
 		} else {
-			uint32_t rand = random();
+			uint32_t rand = layer23_random();
 
 			LOGP(DMM, LOGL_INFO, "New T3212 while timer is not "
 				"running (value %d)\n", s->t3212);
@@ -3247,7 +3247,6 @@ static int gsm48_mm_conn_go_dedic(struct osmocom_ms *ms)
 	struct gsm48_mmlayer *mm = &ms->mmlayer;
 	struct gsm48_mm_conn *conn, *conn_found = NULL;
 	struct msgb *nmsg;
-	struct gsm48_mmxx_hdr *nmmh;
 
 	/* the first and only pending connection is the recent requested */
 	llist_for_each_entry(conn, &mm->mm_conn, list) {
@@ -3296,7 +3295,7 @@ static int gsm48_mm_conn_go_dedic(struct osmocom_ms *ms)
 	}
 	if (!nmsg)
 		return -ENOMEM;
-	nmmh = (struct gsm48_mmxx_hdr *)nmsg->data;
+
 	gsm48_mmxx_upmsg(ms, nmsg);
 
 	return 0;
@@ -3328,7 +3327,6 @@ static int gsm48_mm_sync_ind_active(struct osmocom_ms *ms, struct msgb *msg)
 	struct gsm48_mmlayer *mm = &ms->mmlayer;
 	struct gsm48_mm_conn *conn;
 	struct msgb *nmsg;
-	struct gsm48_mmxx_hdr *nmmh;
 
 	/* stop MM connection timer */
 	stop_mm_t3230(mm);
@@ -3345,7 +3343,7 @@ static int gsm48_mm_sync_ind_active(struct osmocom_ms *ms, struct msgb *msg)
 		}
 		if (!nmsg)
 			continue; /* skip if not of CC type */
-		nmmh = (struct gsm48_mmxx_hdr *)nmsg->data;
+
 		/* copy L3 message */
 		nmsg->l3h = msgb_put(nmsg, msgb_l3len(msg));
 		memcpy(nmsg->l3h, msg->l3h, msgb_l3len(msg));
@@ -3598,15 +3596,12 @@ static int gsm48_rcv_rr_sapi3(struct osmocom_ms *ms, struct msgb *msg,
 		llist_for_each_entry(conn, &mm->mm_conn, list) {
 			if (conn->sapi == sapi
 			 && conn->state == GSM48_MMXX_ST_DEDICATED) {
-				struct gsm48_mmxx_hdr *nmmh;
 				struct msgb *nmsg;
-
 				nmsg = gsm48_mmxx_msgb_alloc(
 					GSM48_MMSMS_EST_CNF, conn->ref,
 					conn->transaction_id, conn->sapi);
 				if (!nmsg)
 					return -ENOMEM;
-				nmmh = (struct gsm48_mmxx_hdr *)nmsg->data;
 				gsm48_mmxx_upmsg(ms, nmsg);
 			}
 		}

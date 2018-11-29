@@ -37,7 +37,11 @@
 #include <osmocom/bb/mobile/app_mobile.h>
 #include <osmocom/bb/mobile/mncc.h>
 #include <osmocom/bb/mobile/voice.h>
+#include <osmocom/bb/mobile/primitives.h>
 #include <osmocom/bb/common/sap_interface.h>
+
+#include <osmocom/vty/ports.h>
+#include <osmocom/vty/logging.h>
 #include <osmocom/vty/telnet_interface.h>
 
 #include <osmocom/core/msgb.h>
@@ -95,9 +99,9 @@ int mobile_signal_cb(unsigned int subsys, unsigned int signal,
 		set = &ms->settings;
 
 		/* waiting for reset after shutdown */
-		if (ms->shutdown == 2) {
-			printf("MS '%s' has been resetted\n", ms->name);
-			ms->shutdown = 3;
+		if (ms->shutdown == MS_SHUTDOWN_WAIT_RESET) {
+			LOGP(DMOB, LOGL_NOTICE, "MS '%s' has been resetted\n", ms->name);
+			ms->shutdown = MS_SHUTDOWN_COMPL;
 			break;
 		}
 
@@ -130,7 +134,7 @@ int mobile_signal_cb(unsigned int subsys, unsigned int signal,
 			gsm322_cs_sendmsg(ms, nmsg);
 		}
 
-		ms->started = 1;
+		mobile_set_started(ms, true);
 	}
 	return 0;
 }
@@ -141,13 +145,13 @@ int mobile_exit(struct osmocom_ms *ms, int force)
 	struct gsm48_mmlayer *mm = &ms->mmlayer;
 
 	/* if shutdown is already performed */
-	if (ms->shutdown >= 2)
+	if (ms->shutdown >= MS_SHUTDOWN_WAIT_RESET)
 		return 0;
 
 	if (!force && ms->started) {
 		struct msgb *nmsg;
 
-		ms->shutdown = 1; /* going down */
+		mobile_set_shutdown(ms, MS_SHUTDOWN_IMSI_DETACH);
 		nmsg = gsm48_mmevent_msgb_alloc(GSM48_MM_EVENT_IMSI_DETACH);
 		if (!nmsg)
 			return -ENOMEM;
@@ -167,20 +171,20 @@ int mobile_exit(struct osmocom_ms *ms, int force)
 	lapdm_channel_exit(&ms->lapdm_channel);
 
 	if (ms->started) {
-		ms->shutdown = 2; /* being down, wait for reset */
+		mobile_set_shutdown(ms, MS_SHUTDOWN_WAIT_RESET); /* being down, wait for reset */
 		l1ctl_tx_reset_req(ms, L1CTL_RES_T_FULL);
 	} else {
-		ms->shutdown = 3; /* being down */
+		mobile_set_shutdown(ms, MS_SHUTDOWN_COMPL); /* being down */
 	}
 	vty_notify(ms, NULL);
 	vty_notify(ms, "Power off!\n");
-	printf("Power off! (MS %s)\n", ms->name);
+	LOGP(DMOB, LOGL_NOTICE, "Power off! (MS %s)\n", ms->name);
 
 	return 0;
 }
 
 /* power-on ms instance */
-int mobile_init(struct osmocom_ms *ms)
+static int mobile_init(struct osmocom_ms *ms)
 {
 	int rc;
 
@@ -211,7 +215,7 @@ int mobile_init(struct osmocom_ms *ms)
 
 	rc = layer2_open(ms, ms->settings.layer2_socket_path);
 	if (rc < 0) {
-		fprintf(stderr, "Failed during layer2_open()\n");
+		LOGP(DMOB, LOGL_ERROR, "Failed during layer2_open(%s)\n", ms->settings.layer2_socket_path);
 		ms->l2_wq.bfd.fd = -1;
 		mobile_exit(ms, 1);
 		return rc;
@@ -229,20 +233,65 @@ int mobile_init(struct osmocom_ms *ms)
 
 	gsm_random_imei(&ms->settings);
 
-	ms->shutdown = 0;
-	ms->started = 0;
+	mobile_set_shutdown(ms, MS_SHUTDOWN_NONE);
+	mobile_set_started(ms, false);
 
 	if (!strcmp(ms->settings.imei, "000000000000000")) {
-		printf("***\nWarning: Mobile '%s' has default IMEI: %s\n",
+		LOGP(DMOB, LOGL_NOTICE, "***\nWarning: Mobile '%s' has default IMEI: %s\n",
 			ms->name, ms->settings.imei);
-		printf("This could relate your identitiy to other users with "
+		LOGP(DMOB, LOGL_NOTICE, "This could relate your identitiy to other users with "
 			"default IMEI.\n***\n");
 	}
 
 	l1ctl_tx_reset_req(ms, L1CTL_RES_T_FULL);
-	printf("Mobile '%s' initialized, please start phone now!\n", ms->name);
+	LOGP(DMOB, LOGL_NOTICE, "Mobile '%s' initialized, please start phone now!\n", ms->name);
 	return 0;
 }
+
+int mobile_start(struct osmocom_ms *ms, char **other_name)
+{
+	struct osmocom_ms *tmp;
+	int rc;
+
+	if (ms->shutdown != MS_SHUTDOWN_COMPL)
+		return 0;
+
+	llist_for_each_entry(tmp, &ms_list, entity) {
+		if (tmp->shutdown == MS_SHUTDOWN_COMPL)
+			continue;
+		if (!strcmp(ms->settings.layer2_socket_path,
+				tmp->settings.layer2_socket_path)) {
+			LOGP(DMOB, LOGL_ERROR, "Cannot start MS '%s', because MS '%s' "
+				"use the same layer2-socket.\nPlease shutdown "
+				"MS '%s' first.\n", ms->name, tmp->name, tmp->name);
+			*other_name = tmp->name;
+			return -1;
+		}
+		if (!strcmp(ms->settings.sap_socket_path,
+				tmp->settings.sap_socket_path)) {
+			LOGP(DMOB, LOGL_ERROR, "Cannot start MS '%s', because MS '%s' "
+				"use the same sap-socket.\nPlease shutdown "
+				"MS '%s' first.\n", ms->name, tmp->name, tmp->name);
+			*other_name = tmp->name;
+			return -2;
+		}
+	}
+
+	rc = mobile_init(ms);
+	if (rc < 0)
+		return -3;
+	return 0;
+}
+
+int mobile_stop(struct osmocom_ms *ms, int force)
+{
+	if (force && ms->shutdown <= MS_SHUTDOWN_IMSI_DETACH)
+		return mobile_exit(ms, 1);
+	if (!force && ms->shutdown == MS_SHUTDOWN_NONE)
+		return mobile_exit(ms, 0);
+	return 0;
+}
+
 
 /* create ms instance */
 struct osmocom_ms *mobile_new(char *name)
@@ -252,7 +301,7 @@ struct osmocom_ms *mobile_new(char *name)
 
 	ms = talloc_zero(l23_ctx, struct osmocom_ms);
 	if (!ms) {
-		fprintf(stderr, "Failed to allocate MS\n");
+		LOGP(DMOB, LOGL_ERROR, "Failed to allocate MS: %s\n", name);
 		return NULL;
 	}
 
@@ -267,13 +316,13 @@ struct osmocom_ms *mobile_new(char *name)
 	gsm_support_init(ms);
 	gsm_settings_init(ms);
 
-	ms->shutdown = 3; /* being down */
+	mobile_set_shutdown(ms, MS_SHUTDOWN_COMPL);
 
 	if (mncc_recv_app) {
 		mncc_name = talloc_asprintf(ms, "/tmp/ms_mncc_%s", ms->name);
 
 		ms->mncc_entity.mncc_recv = mncc_recv_app;
-		ms->mncc_entity.sock_state = mncc_sock_init(ms, mncc_name, l23_ctx);
+		ms->mncc_entity.sock_state = mncc_sock_init(ms, mncc_name);
 
 		talloc_free(mncc_name);
 	} else if (ms->settings.ch_cap == GSM_CAP_SDCCH)
@@ -290,14 +339,14 @@ int mobile_delete(struct osmocom_ms *ms, int force)
 {
 	int rc;
 
-	ms->deleting = 1;
+	ms->deleting = true;
 
 	if (mncc_recv_app) {
 		mncc_sock_exit(ms->mncc_entity.sock_state);
 		ms->mncc_entity.sock_state = NULL;
 	}
 
-	if (ms->shutdown == 0 || (ms->shutdown == 1 && force)) {
+	if (ms->shutdown == MS_SHUTDOWN_NONE || (ms->shutdown == MS_SHUTDOWN_IMSI_DETACH && force)) {
 		rc = mobile_exit(ms, force);
 		if (rc < 0)
 			return rc;
@@ -338,9 +387,9 @@ int l23_app_work(int *_quit)
 	int work = 0;
 
 	llist_for_each_entry_safe(ms, ms2, &ms_list, entity) {
-		if (ms->shutdown != 3)
+		if (ms->shutdown != MS_SHUTDOWN_COMPL)
 			work |= mobile_work(ms);
-		if (ms->shutdown == 3) {
+		if (ms->shutdown == MS_SHUTDOWN_COMPL) {
 			if (ms->l2_wq.bfd.fd > -1) {
 				layer2_close(ms);
 				ms->l2_wq.bfd.fd = -1;
@@ -387,7 +436,7 @@ static struct vty_app_info vty_info = {
 
 /* global init */
 int l23_app_init(int (*mncc_recv)(struct osmocom_ms *ms, int, void *),
-	const char *config_file, const char *vty_ip, uint16_t vty_port)
+	const char *config_file)
 {
 	struct telnet_connection dummy_conn;
 	int rc = 0;
@@ -396,26 +445,32 @@ int l23_app_init(int (*mncc_recv)(struct osmocom_ms *ms, int, void *),
 
 	osmo_gps_init();
 
+	vty_info.tall_ctx = l23_ctx;
 	vty_init(&vty_info);
+	logging_vty_add_cmds(NULL);
 	ms_vty_init();
 	dummy_conn.priv = NULL;
 	vty_reading = 1;
 	if (config_file != NULL) {
 		rc = vty_read_config_file(config_file, &dummy_conn);
 		if (rc < 0) {
-			fprintf(stderr, "Failed to parse the config file:"
-					" '%s'\n", config_file);
-			fprintf(stderr, "Please check or create config file"
-					" using: 'touch %s'\n", config_file);
+			LOGP(DMOB, LOGL_FATAL, "Failed to parse the configuration "
+				"file '%s'\n", config_file);
+			LOGP(DMOB, LOGL_FATAL, "Please make sure the file "
+				"'%s' exists, or use an example from "
+				"'doc/examples/mobile/'\n", config_file);
 			return rc;
 		}
-		printf("Using configuration from %s\n", config_file);
+		LOGP(DMOB, LOGL_INFO, "Using configuration from '%s'\n", config_file);
 	}
 	vty_reading = 0;
-	rc = telnet_init_dynif(l23_ctx, NULL, vty_ip, vty_port);
-	if (rc < 0)
+	rc = telnet_init_dynif(l23_ctx, NULL,
+		vty_get_bind_addr(), OSMO_VTY_PORT_BB);
+	if (rc < 0) {
+		LOGP(DMOB, LOGL_FATAL, "Cannot init VTY on %s port %u: %s\n",
+			vty_get_bind_addr(), OSMO_VTY_PORT_BB, strerror(errno));
 		return rc;
-	printf("VTY available on %s %u\n", vty_ip, vty_port);
+	}
 
 	osmo_signal_register_handler(SS_GLOBAL, &global_signal_cb, NULL);
 	osmo_signal_register_handler(SS_L1CTL, &mobile_signal_cb, NULL);
@@ -424,7 +479,7 @@ int l23_app_init(int (*mncc_recv)(struct osmocom_ms *ms, int, void *),
 	if (llist_empty(&ms_list)) {
 		struct osmocom_ms *ms;
 
-		printf("No Mobile Station defined, creating: MS '1'\n");
+		LOGP(DMOB, LOGL_NOTICE, "No Mobile Station defined, creating: MS '1'\n");
 		ms = mobile_new("1");
 		if (!ms)
 			return -1;
@@ -439,3 +494,17 @@ int l23_app_init(int (*mncc_recv)(struct osmocom_ms *ms, int, void *),
 	return 0;
 }
 
+void mobile_set_started(struct osmocom_ms *ms, bool state)
+{
+	ms->started = state;
+
+	mobile_prim_ntfy_started(ms, state);
+}
+
+void mobile_set_shutdown(struct osmocom_ms *ms, int state)
+{
+	int old_state = ms->shutdown;
+	ms->shutdown = state;
+
+	mobile_prim_ntfy_shutdown(ms, old_state, state);
+}

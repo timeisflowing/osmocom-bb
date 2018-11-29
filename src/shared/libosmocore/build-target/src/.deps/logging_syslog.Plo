@@ -1,3 +1,0 @@
-logging_syslog.lo: ../../src/logging_syslog.c ../config.h
-
-../config.h:

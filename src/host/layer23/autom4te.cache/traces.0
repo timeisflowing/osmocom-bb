@@ -123,10 +123,10 @@ AS_VAR_IF([$1], [""], [$5], [$4])dnl
 m4trace:/usr/share/aclocal-1.15/amversion.m4:14: -1- AC_DEFUN([AM_AUTOMAKE_VERSION], [am__api_version='1.15'
 dnl Some users find AM_AUTOMAKE_VERSION and mistake it for a way to
 dnl require some minimum version.  Point them to the right macro.
-m4_if([$1], [1.15], [],
+m4_if([$1], [1.15.1], [],
       [AC_FATAL([Do not call $0, use AM_INIT_AUTOMAKE([$1]).])])dnl
 ])
-m4trace:/usr/share/aclocal-1.15/amversion.m4:33: -1- AC_DEFUN([AM_SET_CURRENT_AUTOMAKE_VERSION], [AM_AUTOMAKE_VERSION([1.15])dnl
+m4trace:/usr/share/aclocal-1.15/amversion.m4:33: -1- AC_DEFUN([AM_SET_CURRENT_AUTOMAKE_VERSION], [AM_AUTOMAKE_VERSION([1.15.1])dnl
 m4_ifndef([AC_AUTOCONF_VERSION],
   [m4_copy([m4_PACKAGE_VERSION], [AC_AUTOCONF_VERSION])])dnl
 _AM_AUTOCONF_VERSION(m4_defn([AC_AUTOCONF_VERSION]))])
@@ -927,7 +927,7 @@ m4trace:configure.ac:2: -1- m4_pattern_allow([^target_alias$])
 m4trace:configure.ac:3: -1- AM_INIT_AUTOMAKE
 m4trace:configure.ac:3: -1- m4_pattern_allow([^AM_[A-Z]+FLAGS$])
 m4trace:configure.ac:3: -1- AM_SET_CURRENT_AUTOMAKE_VERSION
-m4trace:configure.ac:3: -1- AM_AUTOMAKE_VERSION([1.15])
+m4trace:configure.ac:3: -1- AM_AUTOMAKE_VERSION([1.15.1])
 m4trace:configure.ac:3: -1- _AM_AUTOCONF_VERSION([2.69])
 m4trace:configure.ac:3: -1- m4_pattern_allow([^INSTALL_PROGRAM$])
 m4trace:configure.ac:3: -1- m4_pattern_allow([^INSTALL_SCRIPT$])
@@ -1055,61 +1055,77 @@ m4trace:configure.ac:10: -1- m4_pattern_allow([^am__fastdepCC_FALSE$])
 m4trace:configure.ac:10: -1- _AM_SUBST_NOTMAKE([am__fastdepCC_TRUE])
 m4trace:configure.ac:10: -1- _AM_SUBST_NOTMAKE([am__fastdepCC_FALSE])
 m4trace:configure.ac:12: -1- m4_pattern_allow([^RANLIB$])
-m4trace:configure.ac:15: -1- PKG_CHECK_MODULES([LIBOSMOCORE], [libosmocore])
-m4trace:configure.ac:15: -1- PKG_PROG_PKG_CONFIG
-m4trace:configure.ac:15: -1- m4_pattern_forbid([^_?PKG_[A-Z_]+$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^PKG_CONFIG(_(PATH|LIBDIR|SYSROOT_DIR|ALLOW_SYSTEM_(CFLAGS|LIBS)))?$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^PKG_CONFIG_(DISABLE_UNINSTALLED|TOP_BUILD_DIR|DEBUG_SPEW)$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^PKG_CONFIG$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^PKG_CONFIG_PATH$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^PKG_CONFIG_LIBDIR$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^PKG_CONFIG$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^LIBOSMOCORE_CFLAGS$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^LIBOSMOCORE_LIBS$])
-m4trace:configure.ac:15: -1- PKG_CHECK_EXISTS([libosmocore], [pkg_cv_[]LIBOSMOCORE_CFLAGS=`$PKG_CONFIG --[]cflags "libosmocore" 2>/dev/null`
+m4trace:configure.ac:42: -1- PKG_CHECK_MODULES([LIBOSMOCORE], [libosmocore])
+m4trace:configure.ac:42: -1- PKG_PROG_PKG_CONFIG
+m4trace:configure.ac:42: -1- m4_pattern_forbid([^_?PKG_[A-Z_]+$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^PKG_CONFIG(_(PATH|LIBDIR|SYSROOT_DIR|ALLOW_SYSTEM_(CFLAGS|LIBS)))?$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^PKG_CONFIG_(DISABLE_UNINSTALLED|TOP_BUILD_DIR|DEBUG_SPEW)$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^PKG_CONFIG$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^PKG_CONFIG_PATH$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^PKG_CONFIG_LIBDIR$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^PKG_CONFIG$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^LIBOSMOCORE_CFLAGS$])
+m4trace:configure.ac:42: -1- m4_pattern_allow([^LIBOSMOCORE_LIBS$])
+m4trace:configure.ac:42: -1- PKG_CHECK_EXISTS([libosmocore], [pkg_cv_[]LIBOSMOCORE_CFLAGS=`$PKG_CONFIG --[]cflags "libosmocore" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:15: -1- PKG_CHECK_EXISTS([libosmocore], [pkg_cv_[]LIBOSMOCORE_LIBS=`$PKG_CONFIG --[]libs "libosmocore" 2>/dev/null`
+m4trace:configure.ac:42: -1- PKG_CHECK_EXISTS([libosmocore], [pkg_cv_[]LIBOSMOCORE_LIBS=`$PKG_CONFIG --[]libs "libosmocore" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:15: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:16: -1- PKG_CHECK_MODULES([LIBOSMOVTY], [libosmovty])
-m4trace:configure.ac:16: -1- m4_pattern_allow([^LIBOSMOVTY_CFLAGS$])
-m4trace:configure.ac:16: -1- m4_pattern_allow([^LIBOSMOVTY_LIBS$])
-m4trace:configure.ac:16: -1- PKG_CHECK_EXISTS([libosmovty], [pkg_cv_[]LIBOSMOVTY_CFLAGS=`$PKG_CONFIG --[]cflags "libosmovty" 2>/dev/null`
+m4trace:configure.ac:42: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:43: -1- PKG_CHECK_MODULES([LIBOSMOVTY], [libosmovty >= 0.10.0])
+m4trace:configure.ac:43: -1- m4_pattern_allow([^LIBOSMOVTY_CFLAGS$])
+m4trace:configure.ac:43: -1- m4_pattern_allow([^LIBOSMOVTY_LIBS$])
+m4trace:configure.ac:43: -1- PKG_CHECK_EXISTS([libosmovty >= 0.10.0], [pkg_cv_[]LIBOSMOVTY_CFLAGS=`$PKG_CONFIG --[]cflags "libosmovty >= 0.10.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:16: -1- PKG_CHECK_EXISTS([libosmovty], [pkg_cv_[]LIBOSMOVTY_LIBS=`$PKG_CONFIG --[]libs "libosmovty" 2>/dev/null`
+m4trace:configure.ac:43: -1- PKG_CHECK_EXISTS([libosmovty >= 0.10.0], [pkg_cv_[]LIBOSMOVTY_LIBS=`$PKG_CONFIG --[]libs "libosmovty >= 0.10.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:16: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:17: -1- PKG_CHECK_MODULES([LIBOSMOGSM], [libosmogsm])
-m4trace:configure.ac:17: -1- m4_pattern_allow([^LIBOSMOGSM_CFLAGS$])
-m4trace:configure.ac:17: -1- m4_pattern_allow([^LIBOSMOGSM_LIBS$])
-m4trace:configure.ac:17: -1- PKG_CHECK_EXISTS([libosmogsm], [pkg_cv_[]LIBOSMOGSM_CFLAGS=`$PKG_CONFIG --[]cflags "libosmogsm" 2>/dev/null`
+m4trace:configure.ac:43: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:44: -1- PKG_CHECK_MODULES([LIBOSMOGSM], [libosmogsm])
+m4trace:configure.ac:44: -1- m4_pattern_allow([^LIBOSMOGSM_CFLAGS$])
+m4trace:configure.ac:44: -1- m4_pattern_allow([^LIBOSMOGSM_LIBS$])
+m4trace:configure.ac:44: -1- PKG_CHECK_EXISTS([libosmogsm], [pkg_cv_[]LIBOSMOGSM_CFLAGS=`$PKG_CONFIG --[]cflags "libosmogsm" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:17: -1- PKG_CHECK_EXISTS([libosmogsm], [pkg_cv_[]LIBOSMOGSM_LIBS=`$PKG_CONFIG --[]libs "libosmogsm" 2>/dev/null`
+m4trace:configure.ac:44: -1- PKG_CHECK_EXISTS([libosmogsm], [pkg_cv_[]LIBOSMOGSM_LIBS=`$PKG_CONFIG --[]libs "libosmogsm" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:17: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:18: -1- PKG_CHECK_MODULES([LIBOSMOCODEC], [libosmocodec])
-m4trace:configure.ac:18: -1- m4_pattern_allow([^LIBOSMOCODEC_CFLAGS$])
-m4trace:configure.ac:18: -1- m4_pattern_allow([^LIBOSMOCODEC_LIBS$])
-m4trace:configure.ac:18: -1- PKG_CHECK_EXISTS([libosmocodec], [pkg_cv_[]LIBOSMOCODEC_CFLAGS=`$PKG_CONFIG --[]cflags "libosmocodec" 2>/dev/null`
+m4trace:configure.ac:44: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:45: -1- PKG_CHECK_MODULES([LIBOSMOCODEC], [libosmocodec])
+m4trace:configure.ac:45: -1- m4_pattern_allow([^LIBOSMOCODEC_CFLAGS$])
+m4trace:configure.ac:45: -1- m4_pattern_allow([^LIBOSMOCODEC_LIBS$])
+m4trace:configure.ac:45: -1- PKG_CHECK_EXISTS([libosmocodec], [pkg_cv_[]LIBOSMOCODEC_CFLAGS=`$PKG_CONFIG --[]cflags "libosmocodec" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:18: -1- PKG_CHECK_EXISTS([libosmocodec], [pkg_cv_[]LIBOSMOCODEC_LIBS=`$PKG_CONFIG --[]libs "libosmocodec" 2>/dev/null`
+m4trace:configure.ac:45: -1- PKG_CHECK_EXISTS([libosmocodec], [pkg_cv_[]LIBOSMOCODEC_LIBS=`$PKG_CONFIG --[]libs "libosmocodec" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:18: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:20: -1- m4_pattern_allow([^LIBGPS_CFLAGS$])
-m4trace:configure.ac:21: -1- m4_pattern_allow([^LIBGPS_LIBS$])
-m4trace:configure.ac:25: -1- m4_pattern_allow([^CPP$])
-m4trace:configure.ac:25: -1- m4_pattern_allow([^CPPFLAGS$])
-m4trace:configure.ac:25: -1- m4_pattern_allow([^CPP$])
-m4trace:configure.ac:25: -1- m4_pattern_allow([^GREP$])
-m4trace:configure.ac:25: -1- m4_pattern_allow([^EGREP$])
-m4trace:configure.ac:25: -1- m4_pattern_allow([^STDC_HEADERS$])
-m4trace:configure.ac:29: -1- _m4_warn([obsolete], [AC_OUTPUT should be used without arguments.
+m4trace:configure.ac:45: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:47: -1- m4_pattern_allow([^LIBGPS_CFLAGS$])
+m4trace:configure.ac:48: -1- m4_pattern_allow([^LIBGPS_LIBS$])
+m4trace:configure.ac:52: -1- PKG_CHECK_MODULES([LIBLUA], [lua53], [
+	WITH_LUA=1], [
+	WITH_LUA=0])
+m4trace:configure.ac:52: -1- m4_pattern_allow([^LIBLUA_CFLAGS$])
+m4trace:configure.ac:52: -1- m4_pattern_allow([^LIBLUA_LIBS$])
+m4trace:configure.ac:52: -1- PKG_CHECK_EXISTS([lua53], [pkg_cv_[]LIBLUA_CFLAGS=`$PKG_CONFIG --[]cflags "lua53" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
+m4trace:configure.ac:52: -1- PKG_CHECK_EXISTS([lua53], [pkg_cv_[]LIBLUA_LIBS=`$PKG_CONFIG --[]libs "lua53" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
+m4trace:configure.ac:52: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:55: -1- m4_pattern_allow([^WITH_LUA$])
+m4trace:configure.ac:56: -1- AM_CONDITIONAL([BUILD_LUA], [test "x$WITH_LUA" = "x1"])
+m4trace:configure.ac:56: -1- m4_pattern_allow([^BUILD_LUA_TRUE$])
+m4trace:configure.ac:56: -1- m4_pattern_allow([^BUILD_LUA_FALSE$])
+m4trace:configure.ac:56: -1- _AM_SUBST_NOTMAKE([BUILD_LUA_TRUE])
+m4trace:configure.ac:56: -1- _AM_SUBST_NOTMAKE([BUILD_LUA_FALSE])
+m4trace:configure.ac:59: -1- m4_pattern_allow([^CPP$])
+m4trace:configure.ac:59: -1- m4_pattern_allow([^CPPFLAGS$])
+m4trace:configure.ac:59: -1- m4_pattern_allow([^CPP$])
+m4trace:configure.ac:59: -1- m4_pattern_allow([^GREP$])
+m4trace:configure.ac:59: -1- m4_pattern_allow([^EGREP$])
+m4trace:configure.ac:59: -1- m4_pattern_allow([^STDC_HEADERS$])
+m4trace:configure.ac:63: -1- _m4_warn([obsolete], [AC_OUTPUT should be used without arguments.
 You should run autoupdate.], [])
-m4trace:configure.ac:29: -1- m4_pattern_allow([^LIB@&t@OBJS$])
-m4trace:configure.ac:29: -1- m4_pattern_allow([^LTLIBOBJS$])
-m4trace:configure.ac:29: -1- AM_CONDITIONAL([am__EXEEXT], [test -n "$EXEEXT"])
-m4trace:configure.ac:29: -1- m4_pattern_allow([^am__EXEEXT_TRUE$])
-m4trace:configure.ac:29: -1- m4_pattern_allow([^am__EXEEXT_FALSE$])
-m4trace:configure.ac:29: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_TRUE])
-m4trace:configure.ac:29: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_FALSE])
-m4trace:configure.ac:29: -1- _AM_OUTPUT_DEPENDENCY_COMMANDS
+m4trace:configure.ac:63: -1- m4_pattern_allow([^LIB@&t@OBJS$])
+m4trace:configure.ac:63: -1- m4_pattern_allow([^LTLIBOBJS$])
+m4trace:configure.ac:63: -1- AM_CONDITIONAL([am__EXEEXT], [test -n "$EXEEXT"])
+m4trace:configure.ac:63: -1- m4_pattern_allow([^am__EXEEXT_TRUE$])
+m4trace:configure.ac:63: -1- m4_pattern_allow([^am__EXEEXT_FALSE$])
+m4trace:configure.ac:63: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_TRUE])
+m4trace:configure.ac:63: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_FALSE])
+m4trace:configure.ac:63: -1- _AM_OUTPUT_DEPENDENCY_COMMANDS

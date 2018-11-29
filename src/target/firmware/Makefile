@@ -102,7 +102,8 @@ ANY_APP_LIBS+=	calypso/libcalypso.a \
 		lib/libmini.a \
 		comm/libcomm.a \
 		../../shared/libosmocore/build-target/src/.libs/libosmocore.a \
-		../../shared/libosmocore/build-target/src/gsm/.libs/libosmogsm.a
+		../../shared/libosmocore/build-target/src/gsm/.libs/libosmogsm.a \
+		../../shared/libosmocore/build-target/src/codec/.libs/libosmocodec.a
 
 
 #
@@ -127,7 +128,7 @@ INCLUDES=-Iinclude/ -I../../../include -I../../shared/libosmocore/include -I../.
 #
 
 # Uncomment this line if you want to enable Tx (Transmit) Support.
-CFLAGS += -DCONFIG_TX_ENABLE
+#CFLAGS += -DCONFIG_TX_ENABLE
 
 # Uncomment this line if you want to write to flash.
 #CFLAGS += -DCONFIG_FLASH_WRITE

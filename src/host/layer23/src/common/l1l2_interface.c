@@ -1,7 +1,7 @@
 /* Layer 1 socket interface of layer2/3 stack */
 
 /* (C) 2010 by Holger Hans Peter Freyther
- * (C) 2010 by Harald Welte <laforge@gnumonks.org>
+ * (C) 2010,2018 by Harald Welte <laforge@gnumonks.org>
  *
  * All Rights Reserved
  *
@@ -27,6 +27,7 @@
 #include <osmocom/bb/common/l1l2_interface.h>
 
 #include <osmocom/core/utils.h>
+#include <osmocom/core/socket.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -105,39 +106,18 @@ static int layer2_write(struct osmo_fd *fd, struct msgb *msg)
 int layer2_open(struct osmocom_ms *ms, const char *socket_path)
 {
 	int rc;
-	struct sockaddr_un local;
 
-	ms->l2_wq.bfd.fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (ms->l2_wq.bfd.fd < 0) {
-		fprintf(stderr, "Failed to create unix domain socket.\n");
-		return ms->l2_wq.bfd.fd;
-	}
-
-	local.sun_family = AF_UNIX;
-	strncpy(local.sun_path, socket_path, sizeof(local.sun_path));
-	local.sun_path[sizeof(local.sun_path) - 1] = '\0';
-
-	rc = connect(ms->l2_wq.bfd.fd, (struct sockaddr *) &local,
-		     sizeof(local));
+	rc = osmo_sock_unix_init_ofd(&ms->l2_wq.bfd, SOCK_STREAM, 0, socket_path, OSMO_SOCK_F_CONNECT);
 	if (rc < 0) {
-		fprintf(stderr, "Failed to connect to '%s': %s\n", local.sun_path,
-			strerror(errno));
-		close(ms->l2_wq.bfd.fd);
+		LOGP(DL1C, LOGL_ERROR, "Failed to create unix domain socket %s: %s\n",
+		     socket_path, strerror(-rc));
 		return rc;
 	}
 
 	osmo_wqueue_init(&ms->l2_wq, 100);
 	ms->l2_wq.bfd.data = ms;
-	ms->l2_wq.bfd.when = BSC_FD_READ;
 	ms->l2_wq.read_cb = layer2_read;
 	ms->l2_wq.write_cb = layer2_write;
-
-	rc = osmo_fd_register(&ms->l2_wq.bfd);
-	if (rc != 0) {
-		fprintf(stderr, "Failed to register fd.\n");
-		close(ms->l2_wq.bfd.fd);
-		return rc;
-	}
 
 	return 0;
 }
@@ -157,16 +137,13 @@ int layer2_close(struct osmocom_ms *ms)
 
 int osmo_send_l1(struct osmocom_ms *ms, struct msgb *msg)
 {
-	uint16_t *len;
-
 	DEBUGP(DL1C, "Sending: '%s'\n", osmo_hexdump(msg->data, msg->len));
 
 	if (msg->l1h != msg->data)
 		LOGP(DL1C, LOGL_ERROR, "Message L1 header != Message Data\n");
-	
+
 	/* prepend 16bit length before sending */
-	len = (uint16_t *) msgb_push(msg, sizeof(*len));
-	*len = htons(msg->len - sizeof(*len));
+	msgb_push_u16(msg, msg->len);
 
 	if (osmo_wqueue_enqueue(&ms->l2_wq, msg) != 0) {
 		LOGP(DL1C, LOGL_ERROR, "Failed to enqueue msg.\n");

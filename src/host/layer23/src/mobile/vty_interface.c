@@ -35,12 +35,17 @@
 #include <osmocom/bb/common/networks.h>
 #include <osmocom/bb/common/gps.h>
 #include <osmocom/bb/mobile/mncc.h>
+#include <osmocom/bb/mobile/mncc_ms.h>
 #include <osmocom/bb/mobile/transaction.h>
 #include <osmocom/bb/mobile/vty.h>
 #include <osmocom/bb/mobile/app_mobile.h>
 #include <osmocom/bb/mobile/gsm480_ss.h>
 #include <osmocom/bb/mobile/gsm411_sms.h>
+#include <osmocom/bb/mobile/dos.h>
 #include <osmocom/vty/telnet_interface.h>
+#include <osmocom/vty/misc.h>
+
+//Zero patch
 
 void *l23_ctx;
 
@@ -51,29 +56,25 @@ int mncc_hold(struct osmocom_ms *ms);
 int mncc_retrieve(struct osmocom_ms *ms, int number);
 int mncc_dtmf(struct osmocom_ms *ms, char *dtmf);
 
+// Zero patch end
 extern struct llist_head ms_list;
 extern struct llist_head active_connections;
 
-struct {
-	int pid;
-	int dcs;
-} silent_sms;
-
 struct cmd_node ms_node = {
 	MS_NODE,
-	"%s(ms)#",
+	"%s(ms)# ",
 	1
 };
 
 struct cmd_node testsim_node = {
 	TESTSIM_NODE,
-	"%s(test-sim)#",
+	"%s(test-sim)# ",
 	1
 };
 
 struct cmd_node support_node = {
 	SUPPORT_NODE,
-	"%s(support)#",
+	"%s(support)# ",
 	1
 };
 
@@ -129,7 +130,7 @@ static void vty_restart(struct vty *vty, struct osmocom_ms *ms)
 {
 	if (vty_reading)
 		return;
-	if (ms->shutdown != 0)
+	if (ms->shutdown != MS_SHUTDOWN_NONE)
 		return;
 	vty_out(vty, "You must restart MS '%s' ('shutdown / no shutdown') for "
 		"change to take effect!%s", ms->name, VTY_NEWLINE);
@@ -148,7 +149,7 @@ static struct osmocom_ms *get_ms(const char *name, struct vty *vty)
 
 	llist_for_each_entry(ms, &ms_list, entity) {
 		if (!strcmp(ms->name, name)) {
-			if (ms->shutdown) {
+			if (ms->shutdown != MS_SHUTDOWN_NONE) {
 				vty_out(vty, "MS '%s' is admin down.%s", name,
 					VTY_NEWLINE);
 				return NULL;
@@ -195,9 +196,9 @@ static void gsm_ms_dump(struct osmocom_ms *ms, struct vty *vty)
 		service = ", MM connection active";
 
 	vty_out(vty, "MS '%s' is %s%s%s%s", ms->name,
-		(ms->shutdown) ? "administratively " : "",
-		(ms->shutdown || !ms->started) ? "down" : "up",
-		(!ms->shutdown) ? service : "",
+		(ms->shutdown != MS_SHUTDOWN_NONE) ? "administratively " : "",
+		(ms->shutdown != MS_SHUTDOWN_NONE || !ms->started) ? "down" : "up",
+		(ms->shutdown == MS_SHUTDOWN_NONE) ? service : "",
 		VTY_NEWLINE);
 	vty_out(vty, "  IMEI: %s%s", set->imei, VTY_NEWLINE);
 	vty_out(vty, "     IMEISV: %s%s", set->imeisv, VTY_NEWLINE);
@@ -207,7 +208,7 @@ static void gsm_ms_dump(struct osmocom_ms *ms, struct vty *vty)
 	else
 		vty_out(vty, "     IMEI generation: fixed%s", VTY_NEWLINE);
 
-	if (ms->shutdown)
+	if (ms->shutdown != MS_SHUTDOWN_NONE)
 		return;
 
 	if (set->plmn_mode == PLMN_MODE_AUTO)
@@ -309,7 +310,7 @@ DEFUN(show_subscr, show_subscr_cmd, "show subscriber [MS_NAME]",
 		gsm_subscr_dump(&ms->subscr, print_vty, vty);
 	} else {
 		llist_for_each_entry(ms, &ms_list, entity) {
-			if (!ms->shutdown) {
+			if (ms->shutdown == MS_SHUTDOWN_NONE) {
 				gsm_subscr_dump(&ms->subscr, print_vty, vty);
 				vty_out(vty, "%s", VTY_NEWLINE);
 			}
@@ -909,32 +910,6 @@ DEFUN(call_dtmf, call_dtmf_cmd, "call MS_NAME dtmf DIGITS",
 	return CMD_SUCCESS;
 }
 
-DEFUN(silent, silent_cmd, "silent TP-PID TP-DCS",
-	"Set SMS messages header\n"
-	"1 for 0x40, 0 for default\n"
-	"1 for 0xC0, 0 for default\n")
-{
-	int pid;
-	int dcs;
-
-	if (argc >= 1) {
-		pid = atoi(argv[0]);
-		dcs = atoi(argv[1]);
-		if (pid) {
-			silent_sms.pid = 1;
-		} else {
-			silent_sms.pid = 0;
-		}
-		if (dcs) {
-			silent_sms.dcs = 1;
-		} else {
-			silent_sms.dcs = 0;
-		}
-	}
-
-	return CMD_SUCCESS;
-}
-
 DEFUN(sms, sms_cmd, "sms MS_NAME NUMBER .LINE",
 	"Send an SMS\nName of MS (see \"show ms\")\nPhone number to send SMS "
 	"(Use digits '0123456789*#abc', and '+' to dial international)\n"
@@ -979,10 +954,38 @@ DEFUN(sms, sms_cmd, "sms MS_NAME NUMBER .LINE",
 	if (vty_check_number(vty, number))
 		return CMD_WARNING;
 
-	sms_send(ms, sms_sca, number, argv_concat(argv, argc, 2));
+	sms_send(ms, sms_sca, number, argv_concat(argv, argc, 2), 42);
 
 	return CMD_SUCCESS;
 }
+
+DEFUN(silent, silent_cmd, "silent TP-PID TP-DCS",
+	"Set SMS messages header\n"
+	"1 for 0x40, 0 for default\n"
+	"1 for 0xC0, 0 for default\n")
+{
+	int pid;
+	int dcs;
+
+	if (argc >= 1) {
+		pid = atoi(argv[0]);
+		dcs = atoi(argv[1]);
+		if (pid) {
+			silent_sms.pid = 1;
+		} else {
+			silent_sms.pid = 0;
+		}
+		if (dcs) {
+			silent_sms.dcs = 1;
+		} else {
+			silent_sms.dcs = 0;
+		}
+	}
+
+	return CMD_SUCCESS;
+}
+
+
 
 DEFUN(service, service_cmd, "service MS_NAME (*#06#|*#21#|*#67#|*#61#|*#62#"
 	"|*#002#|*#004#|*xx*number#|*xx#|#xx#|##xx#|STRING|hangup)",
@@ -1173,7 +1176,7 @@ DEFUN(cfg_gps_device, cfg_gps_device_cmd, "gps device DEVICE",
 	"GPS receiver\nSelect serial device\n"
 	"Full path of serial device including /dev/")
 {
-	strncpy(g.device, argv[0], sizeof(g.device));
+	osmo_strlcpy(g.device, argv[0], sizeof(g.device));
 	g.device[sizeof(g.device) - 1] = '\0';
 	g.gps_type = GPS_TYPE_SERIAL;
 	if (g.enable) {
@@ -1525,7 +1528,6 @@ static void config_write_ms(struct vty *vty, struct osmocom_ms *ms)
 	if (!hide_default || set->skip_max_per_band)
 		vty_out(vty, "  %sskip-max-per-band%s",
 			(set->skip_max_per_band) ? "" : "no ", VTY_NEWLINE);
-	vty_out(vty, " exit%s", VTY_NEWLINE);
 	vty_out(vty, " test-sim%s", VTY_NEWLINE);
 	vty_out(vty, "  imsi %s%s", set->test_imsi, VTY_NEWLINE);
 	switch (set->test_ki_type) {
@@ -1561,11 +1563,15 @@ static void config_write_ms(struct vty *vty, struct osmocom_ms *ms)
 		vty_out(vty, "  hplmn-search %s%s",
 			(set->test_always) ? "everywhere" : "foreign-country",
 			VTY_NEWLINE);
-	vty_out(vty, " exit%s", VTY_NEWLINE);
+	if (!hide_default || set->any_timeout != MOB_C7_DEFLT_ANY_TIMEOUT)
+		vty_out(vty, " c7-any-timeout %d%s",
+			set->any_timeout, VTY_NEWLINE);
+
 	/* no shutdown must be written to config, because shutdown is default */
-	vty_out(vty, " %sshutdown%s", (ms->shutdown) ? "" : "no ",
+	vty_out(vty, " %sshutdown%s", (ms->shutdown != MS_SHUTDOWN_NONE) ? "" : "no ",
 		VTY_NEWLINE);
-	vty_out(vty, "exit%s", VTY_NEWLINE);
+	if (ms->lua_script)
+		vty_out(vty, " lua-script %s%s", ms->lua_script, VTY_NEWLINE);
 	vty_out(vty, "!%s", VTY_NEWLINE);
 }
 
@@ -1611,8 +1617,7 @@ DEFUN(cfg_ms_layer2, cfg_ms_layer2_cmd, "layer2-socket PATH",
 	struct osmocom_ms *ms = vty->index;
 	struct gsm_settings *set = &ms->settings;
 
-	strncpy(set->layer2_socket_path, argv[0],
-		sizeof(set->layer2_socket_path) - 1);
+	OSMO_STRLCPY_ARRAY(set->layer2_socket_path, argv[0]);
 
 	vty_restart(vty, ms);
 	return CMD_SUCCESS;
@@ -1625,8 +1630,7 @@ DEFUN(cfg_ms_sap, cfg_ms_sap_cmd, "sap-socket PATH",
 	struct osmocom_ms *ms = vty->index;
 	struct gsm_settings *set = &ms->settings;
 
-	strncpy(set->sap_socket_path, argv[0],
-		sizeof(set->sap_socket_path) - 1);
+	OSMO_STRLCPY_ARRAY(set->sap_socket_path, argv[0]);
 
 	vty_restart(vty, ms);
 	return CMD_SUCCESS;
@@ -1792,6 +1796,26 @@ DEFUN(cfg_ms_no_sms_sca, cfg_ms_no_sms_sca_cmd, "no sms-service-center",
 
 	set->sms_sca[0] = '\0';
 
+	return CMD_SUCCESS;
+}
+
+DEFUN(cfg_ms_no_sms_store, cfg_ms_no_sms_store_cmd, "no sms-store",
+	NO_STR "Store SMS in the home directory")
+{
+	struct osmocom_ms *ms = vty->index;
+	struct gsm_settings *set = &ms->settings;
+
+	set->store_sms = false;
+	return CMD_SUCCESS;
+}
+
+DEFUN(cfg_ms_sms_store, cfg_ms_sms_store_cmd, "sms-store",
+	"Store SMS in the home directory")
+{
+	struct osmocom_ms *ms = vty->index;
+	struct gsm_settings *set = &ms->settings;
+
+	set->store_sms = true;
 	return CMD_SUCCESS;
 }
 
@@ -2137,16 +2161,16 @@ DEFUN(cfg_abbrev, cfg_ms_abbrev_cmd, "abbrev ABBREVIATION NUMBER [NAME]",
 	if (vty_check_number(vty, argv[1]))
 		return CMD_WARNING;
 
-	abbrev = talloc_zero(l23_ctx, struct gsm_settings_abbrev);
+	abbrev = talloc_zero(ms, struct gsm_settings_abbrev);
 	if (!abbrev) {
 		vty_out(vty, "No Memory!%s", VTY_NEWLINE);
 		return CMD_WARNING;
 	}
 	llist_add_tail(&abbrev->list, &set->abbrev);
-	strncpy(abbrev->abbrev, argv[0], sizeof(abbrev->abbrev) - 1);
-	strncpy(abbrev->number, argv[1], sizeof(abbrev->number) - 1);
+	OSMO_STRLCPY_ARRAY(abbrev->abbrev, argv[0]);
+	OSMO_STRLCPY_ARRAY(abbrev->number, argv[1]);
 	if (argc >= 3)
-		strncpy(abbrev->name, argv[2], sizeof(abbrev->name) - 1);
+		OSMO_STRLCPY_ARRAY(abbrev->name, argv[2]);
 
 	return CMD_SUCCESS;
 }
@@ -2197,6 +2221,19 @@ DEFUN(cfg_ms_no_neighbour, cfg_ms_no_neighbour_cmd, "no neighbour-measurement",
 	struct gsm_settings *set = &ms->settings;
 
 	set->no_neighbour = 1;
+
+	vty_restart_if_started(vty, ms);
+
+	return CMD_SUCCESS;
+}
+
+DEFUN(cfg_ms_any_timeout, cfg_ms_any_timeout_cmd, "c7-any-timeout <0-255>",
+	"Seconds to wait in C7 before doing a PLMN search")
+{
+	struct osmocom_ms *ms = vty->index;
+	struct gsm_settings *set = &ms->settings;
+
+	set->any_timeout = atoi(argv[0]);
 
 	vty_restart_if_started(vty, ms);
 
@@ -2425,9 +2462,12 @@ DEFUN(cfg_ms_sup_class_pcs, cfg_ms_sup_class_pcs_cmd, "class-pcs (1|2|3)",
 	return CMD_SUCCESS;
 }
 
-DEFUN(cfg_ms_sup_ch_cap, cfg_ms_sup_ch_cap_cmd, "channel-capability "
-	"(sdcch|sdcch+tchf|sdcch+tchf+tchh)",
-	"Select channel capability\nSDCCH only\nSDCCH + TCH/F\nSDCCH + TCH/H")
+DEFUN(cfg_ms_sup_ch_cap, cfg_ms_sup_ch_cap_cmd,
+	"channel-capability (sdcch|sdcch+tchf|sdcch+tchf+tchh)",
+	"Select channel capability\n"
+	"SDCCH only\n"
+	"SDCCH + TCH/F\n"
+	"SDCCH + TCH/F + TCH/H")
 {
 	struct osmocom_ms *ms = vty->index;
 	struct gsm_settings *set = &ms->settings;
@@ -2558,7 +2598,7 @@ DEFUN(cfg_test_imsi, cfg_test_imsi_cmd, "imsi IMSI",
 #define HEX_STR "\nByte as two digits hexadecimal"
 DEFUN(cfg_test_ki_xor, cfg_test_ki_xor_cmd, "ki xor HEX HEX HEX HEX HEX HEX "
 	"HEX HEX HEX HEX HEX HEX",
-	"Set Key (Kc) on test card\nUse XOR algorithm" HEX_STR HEX_STR HEX_STR
+	"Set Key (Ki) on test card\nUse XOR algorithm" HEX_STR HEX_STR HEX_STR
 	HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR)
 {
 	struct osmocom_ms *ms = vty->index;
@@ -2586,7 +2626,7 @@ DEFUN(cfg_test_ki_xor, cfg_test_ki_xor_cmd, "ki xor HEX HEX HEX HEX HEX HEX "
 
 DEFUN(cfg_test_ki_comp128, cfg_test_ki_comp128_cmd, "ki comp128 HEX HEX HEX "
 	"HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX",
-	"Set Key (Kc) on test card\nUse XOR algorithm" HEX_STR HEX_STR HEX_STR
+	"Set Key (Ki) on test card\nUse XOR algorithm" HEX_STR HEX_STR HEX_STR
 	HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR HEX_STR
 	HEX_STR HEX_STR HEX_STR HEX_STR)
 {
@@ -2731,35 +2771,25 @@ DEFUN(cfg_test_hplmn, cfg_test_hplmn_cmd, "hplmn-search (everywhere|foreign-coun
 DEFUN(cfg_no_shutdown, cfg_ms_no_shutdown_cmd, "no shutdown",
 	NO_STR "Activate and run MS")
 {
-	struct osmocom_ms *ms = vty->index, *tmp;
+	struct osmocom_ms *ms = vty->index;
+	char *other_name = NULL;
 	int rc;
 
-	if (ms->shutdown != 3)
-		return CMD_SUCCESS;
-
-	llist_for_each_entry(tmp, &ms_list, entity) {
-		if (tmp->shutdown == 3)
-			continue;
-		if (!strcmp(ms->settings.layer2_socket_path,
-				tmp->settings.layer2_socket_path)) {
-			vty_out(vty, "Cannot start MS '%s', because MS '%s' "
-				"use the same layer2-socket.%sPlease shutdown "
-				"MS '%s' first.%s", ms->name, tmp->name,
-				VTY_NEWLINE, tmp->name, VTY_NEWLINE);
-			return CMD_WARNING;
-		}
-		if (!strcmp(ms->settings.sap_socket_path,
-				tmp->settings.sap_socket_path)) {
-			vty_out(vty, "Cannot start MS '%s', because MS '%s' "
-				"use the same sap-socket.%sPlease shutdown "
-				"MS '%s' first.%s", ms->name, tmp->name,
-				VTY_NEWLINE, tmp->name, VTY_NEWLINE);
-			return CMD_WARNING;
-		}
-	}
-
-	rc = mobile_init(ms);
-	if (rc < 0) {
+	rc = mobile_start(ms, &other_name);
+	switch (rc) {
+	case -1:
+		vty_out(vty, "Cannot start MS '%s', because MS '%s' "
+			"use the same layer2-socket.%sPlease shutdown "
+			"MS '%s' first.%s", ms->name, other_name,
+			VTY_NEWLINE, other_name, VTY_NEWLINE);
+		return CMD_WARNING;
+	case -2:
+		vty_out(vty, "Cannot start MS '%s', because MS '%s' "
+			"use the same sap-socket.%sPlease shutdown "
+			"MS '%s' first.%s", ms->name, other_name,
+			VTY_NEWLINE, other_name, VTY_NEWLINE);
+		return CMD_WARNING;
+	case -3:
 		vty_out(vty, "Connection to layer 1 failed!%s",
 			VTY_NEWLINE);
 		return CMD_WARNING;
@@ -2772,10 +2802,7 @@ DEFUN(cfg_shutdown, cfg_ms_shutdown_cmd, "shutdown",
 	"Shut down and deactivate MS")
 {
 	struct osmocom_ms *ms = vty->index;
-
-	if (ms->shutdown == 0)
-		mobile_exit(ms, 0);
-
+	mobile_stop(ms, 0);
 	return CMD_SUCCESS;
 }
 
@@ -2784,13 +2811,35 @@ DEFUN(cfg_shutdown_force, cfg_ms_shutdown_force_cmd, "shutdown force",
 {
 	struct osmocom_ms *ms = vty->index;
 
-	if (ms->shutdown <= 1)
-		mobile_exit(ms, 1);
-
+	mobile_stop(ms, 1);
 	return CMD_SUCCESS;
 }
 
-enum node_type ms_vty_go_parent(struct vty *vty)
+DEFUN(cfg_ms_script_load_run, cfg_ms_script_load_run_cmd, "lua-script FILENAME",
+	"Load and execute a LUA script\nFilename for lua script")
+{
+	struct osmocom_ms *ms = vty->index;
+
+	osmo_talloc_replace_string(ms, &ms->lua_script, argv[0]);
+	if (!ms->lua_script)
+		return CMD_WARNING;
+
+	script_lua_load(vty, ms, ms->lua_script);
+	return CMD_SUCCESS;
+}
+
+DEFUN(cfg_ms_no_script_load_run, cfg_ms_no_script_load_run_cmd, "no lua-script",
+	NO_STR "Load and execute LUA script")
+{
+	struct osmocom_ms *ms = vty->index;
+
+	script_lua_close(ms);
+	talloc_free(ms->lua_script);
+	ms->lua_script = NULL;
+	return CMD_SUCCESS;
+}
+
+int ms_vty_go_parent(struct vty *vty)
 {
 	switch (vty->node) {
 	case MS_NODE:
@@ -2806,50 +2855,6 @@ enum node_type ms_vty_go_parent(struct vty *vty)
 	}
 
 	return vty->node;
-}
-
-/* Down vty node level. */
-gDEFUN(ournode_exit,
-       ournode_exit_cmd, "exit", "Exit current mode and down to previous mode\n")
-{
-	switch (vty->node) {
-	case MS_NODE:
-		vty->node = CONFIG_NODE;
-		vty->index = NULL;
-		break;
-	case TESTSIM_NODE:
-	case SUPPORT_NODE:
-		vty->node = MS_NODE;
-		break;
-	default:
-		break;
-	}
-	return CMD_SUCCESS;
-}
-
-/* End of configuration. */
-gDEFUN(ournode_end,
-       ournode_end_cmd, "end", "End current mode and change to enable mode.")
-{
-	switch (vty->node) {
-	case VIEW_NODE:
-	case ENABLE_NODE:
-		/* Nothing to do. */
-		break;
-	case CONFIG_NODE:
-	case VTY_NODE:
-	case MS_NODE:
-	case TESTSIM_NODE:
-	case SUPPORT_NODE:
-		vty_config_unlock(vty);
-		vty->node = ENABLE_NODE;
-		vty->index = NULL;
-		vty->index_sub = NULL;
-		break;
-	default:
-		break;
-	}
-	return CMD_SUCCESS;
 }
 
 DEFUN(off, off_cmd, "off",
@@ -2896,7 +2901,6 @@ int ms_vty_init(void)
 	install_element(ENABLE_NODE, &call_retr_cmd);
 	install_element(ENABLE_NODE, &call_dtmf_cmd);
 	install_element(ENABLE_NODE, &sms_cmd);
-	install_element(ENABLE_NODE, &silent_cmd);
 	install_element(ENABLE_NODE, &service_cmd);
 	install_element(ENABLE_NODE, &test_reselection_cmd);
 	install_element(ENABLE_NODE, &delete_forbidden_plmn_cmd);
@@ -2917,9 +2921,6 @@ int ms_vty_init(void)
 	install_element(CONFIG_NODE, &cfg_ms_rename_cmd);
 	install_element(CONFIG_NODE, &cfg_no_ms_cmd);
 	install_node(&ms_node, config_write);
-	install_default(MS_NODE);
-	install_element(MS_NODE, &ournode_exit_cmd);
-	install_element(MS_NODE, &ournode_end_cmd);
 	install_element(MS_NODE, &cfg_ms_show_this_cmd);
 	install_element(MS_NODE, &cfg_ms_layer2_cmd);
 	install_element(MS_NODE, &cfg_ms_sap_cmd);
@@ -2960,11 +2961,11 @@ int ms_vty_init(void)
 	install_element(MS_NODE, &cfg_ms_testsim_cmd);
 	install_element(MS_NODE, &cfg_ms_neighbour_cmd);
 	install_element(MS_NODE, &cfg_ms_no_neighbour_cmd);
+	install_element(MS_NODE, &cfg_ms_any_timeout_cmd);
+	install_element(MS_NODE, &cfg_ms_sms_store_cmd);
+	install_element(MS_NODE, &cfg_ms_no_sms_store_cmd);
 	install_element(MS_NODE, &cfg_ms_support_cmd);
 	install_node(&support_node, config_write_dummy);
-	install_default(SUPPORT_NODE);
-	install_element(SUPPORT_NODE, &ournode_exit_cmd);
-	install_element(SUPPORT_NODE, &ournode_end_cmd);
 	install_element(SUPPORT_NODE, &cfg_ms_sup_dtmf_cmd);
 	install_element(SUPPORT_NODE, &cfg_ms_sup_no_dtmf_cmd);
 	install_element(SUPPORT_NODE, &cfg_ms_sup_sms_cmd);
@@ -3020,9 +3021,6 @@ int ms_vty_init(void)
 	install_element(SUPPORT_NODE, &cfg_ms_sup_skip_max_per_band_cmd);
 	install_element(SUPPORT_NODE, &cfg_ms_sup_no_skip_max_per_band_cmd);
 	install_node(&testsim_node, config_write_dummy);
-	install_default(TESTSIM_NODE);
-	install_element(TESTSIM_NODE, &ournode_exit_cmd);
-	install_element(TESTSIM_NODE, &ournode_end_cmd);
 	install_element(TESTSIM_NODE, &cfg_test_imsi_cmd);
 	install_element(TESTSIM_NODE, &cfg_test_ki_xor_cmd);
 	install_element(TESTSIM_NODE, &cfg_test_ki_comp128_cmd);
@@ -3035,6 +3033,11 @@ int ms_vty_init(void)
 	install_element(MS_NODE, &cfg_ms_shutdown_cmd);
 	install_element(MS_NODE, &cfg_ms_shutdown_force_cmd);
 	install_element(MS_NODE, &cfg_ms_no_shutdown_cmd);
+	install_element(MS_NODE, &cfg_ms_script_load_run_cmd);
+	install_element(MS_NODE, &cfg_ms_no_script_load_run_cmd);
+
+	/* Register the talloc context introspection command */
+	osmo_talloc_vty_add_cmds();
 
 	return 0;
 }

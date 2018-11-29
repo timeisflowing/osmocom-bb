@@ -79,6 +79,7 @@
 #include <osmocom/bb/common/networks.h>
 #include <osmocom/bb/common/l1ctl.h>
 #include <osmocom/bb/mobile/vty.h>
+#include <osmocom/bb/common/utils.h>
 
 #include <l1ctl_proto.h>
 
@@ -743,11 +744,6 @@ static void timeout_rr_t3122(void *arg)
 	LOGP(DRR, LOGL_INFO, "timer T3122 has fired\n");
 }
 
-static void timeout_rr_t3124(void *arg)
-{
-	LOGP(DRR, LOGL_INFO, "timer T3124 has fired\n");
-}
-
 static void timeout_rr_t3126(void *arg)
 {
 	struct gsm48_rrlayer *rr = arg;
@@ -810,15 +806,6 @@ static void start_rr_t3122(struct gsm48_rrlayer *rr, int sec, int micro)
 	rr->t3122.cb = timeout_rr_t3122;
 	rr->t3122.data = rr;
 	osmo_timer_schedule(&rr->t3122, sec, micro);
-}
-
-static void start_rr_t3124(struct gsm48_rrlayer *rr, int sec, int micro)
-{
-	LOGP(DRR, LOGL_INFO, "starting T3124 with %d.%03d seconds\n", sec,
-		micro / 1000);
-	rr->t3124.cb = timeout_rr_t3124;
-	rr->t3124.data = rr;
-	osmo_timer_schedule(&rr->t3124, sec, micro);
 }
 
 static void start_rr_t3126(struct gsm48_rrlayer *rr, int sec, int micro)
@@ -1019,9 +1006,11 @@ static int gsm48_rr_rx_cip_mode_cmd(struct osmocom_ms *ms, struct msgb *msg)
 	rr->cipher_on = sc;
 	rr->cipher_type = alg_id;
 	if (rr->cipher_on)
-		l1ctl_tx_crypto_req(ms, rr->cipher_type + 1, subscr->key, 8);
+		l1ctl_tx_crypto_req(ms, rr->cd_now.chan_nr,
+			rr->cipher_type + 1, subscr->key, 8);
 	else
-		l1ctl_tx_crypto_req(ms, 0, NULL, 0);
+		l1ctl_tx_crypto_req(ms, rr->cd_now.chan_nr,
+			0, NULL, 0);
 
 	/* response (using the new mode) */
 	return gsm48_rr_tx_cip_mode_cpl(ms, cr);
@@ -1640,7 +1629,7 @@ fail:
 		}
 	}
 
-	chan_req = random();
+	chan_req = layer23_random();
 	chan_req &= rr->chan_req_mask;
 	chan_req |= rr->chan_req_val;
 
@@ -1925,7 +1914,6 @@ static int gsm48_rr_rx_sysinfo3(struct osmocom_ms *ms, struct msgb *msg)
 /* receive "SYSTEM INFORMATION 4" message (9.1.36) */
 static int gsm48_rr_rx_sysinfo4(struct osmocom_ms *ms, struct msgb *msg)
 {
-	/* NOTE: pseudo length is not in this structure, so we skip */
 	struct gsm48_system_information_type_4 *si = msgb_l3(msg);
 	struct gsm48_sysinfo *s = ms->cellsel.si;
 	int payload_len = msgb_l3len(msg) - sizeof(*si);
@@ -1957,10 +1945,9 @@ static int gsm48_rr_rx_sysinfo4(struct osmocom_ms *ms, struct msgb *msg)
 /* receive "SYSTEM INFORMATION 5" message (9.1.37) */
 static int gsm48_rr_rx_sysinfo5(struct osmocom_ms *ms, struct msgb *msg)
 {
-	/* NOTE: pseudo length is not in this structure, so we skip */
-	struct gsm48_system_information_type_5 *si = msgb_l3(msg) + 1;
+	struct gsm48_system_information_type_5 *si = msgb_l3(msg);
 	struct gsm48_sysinfo *s = ms->cellsel.si;
-	int payload_len = msgb_l3len(msg) - sizeof(*si) - 1;
+	int payload_len = msgb_l3len(msg) - sizeof(*si);
 
 	if (!s) {
 		LOGP(DRR, LOGL_INFO, "No cell selected, SYSTEM INFORMATION 5 "
@@ -1987,10 +1974,9 @@ static int gsm48_rr_rx_sysinfo5(struct osmocom_ms *ms, struct msgb *msg)
 /* receive "SYSTEM INFORMATION 5bis" message (9.1.38) */
 static int gsm48_rr_rx_sysinfo5bis(struct osmocom_ms *ms, struct msgb *msg)
 {
-	/* NOTE: pseudo length is not in this structure, so we skip */
-	struct gsm48_system_information_type_5bis *si = msgb_l3(msg) + 1;
+	struct gsm48_system_information_type_5bis *si = msgb_l3(msg);
 	struct gsm48_sysinfo *s = ms->cellsel.si;
-	int payload_len = msgb_l3len(msg) - sizeof(*si) - 1;
+	int payload_len = msgb_l3len(msg) - sizeof(*si);
 
 	if (!s) {
 		LOGP(DRR, LOGL_INFO, "No cell selected, SYSTEM INFORMATION 5bis"
@@ -2018,10 +2004,9 @@ static int gsm48_rr_rx_sysinfo5bis(struct osmocom_ms *ms, struct msgb *msg)
 /* receive "SYSTEM INFORMATION 5ter" message (9.1.39) */
 static int gsm48_rr_rx_sysinfo5ter(struct osmocom_ms *ms, struct msgb *msg)
 {
-	/* NOTE: pseudo length is not in this structure, so we skip */
-	struct gsm48_system_information_type_5ter *si = msgb_l3(msg) + 1;
+	struct gsm48_system_information_type_5ter *si = msgb_l3(msg);
 	struct gsm48_sysinfo *s = ms->cellsel.si;
-	int payload_len = msgb_l3len(msg) - sizeof(*si) - 1;
+	int payload_len = msgb_l3len(msg) - sizeof(*si);
 
 	if (!s) {
 		LOGP(DRR, LOGL_INFO, "No cell selected, SYSTEM INFORMATION 5ter"
@@ -2049,11 +2034,10 @@ static int gsm48_rr_rx_sysinfo5ter(struct osmocom_ms *ms, struct msgb *msg)
 /* receive "SYSTEM INFORMATION 6" message (9.1.39) */
 static int gsm48_rr_rx_sysinfo6(struct osmocom_ms *ms, struct msgb *msg)
 {
-	/* NOTE: pseudo length is not in this structure, so we skip */
-	struct gsm48_system_information_type_6 *si = msgb_l3(msg) + 1;
+	struct gsm48_system_information_type_6 *si = msgb_l3(msg);
 	struct gsm48_sysinfo *s = ms->cellsel.si;
 	struct rx_meas_stat *meas = &ms->meas;
-	int payload_len = msgb_l3len(msg) - sizeof(*si) - 1;
+	int payload_len = msgb_l3len(msg) - sizeof(*si);
 
 	if (!s) {
 		LOGP(DRR, LOGL_INFO, "No cell selected, SYSTEM INFORMATION 6 "
@@ -2735,7 +2719,7 @@ static int gsm48_rr_tx_meas_rep(struct osmocom_ms *ms)
 	uint8_t serv_rxlev_full = 0, serv_rxlev_sub = 0, serv_rxqual_full = 0,
 		serv_rxqual_sub = 0;
 	uint8_t ta, tx_power;
-	uint8_t rep_ba = 0, rep_valid = 0, meas_valid = 0, multi_rep = 0;
+	uint8_t rep_ba = 0, rep_valid = 0, meas_valid = 0;
 	uint8_t n = 0, rxlev_nc[6], bsic_nc[6], bcch_f_nc[6];
 
 	/* just in case! */
@@ -2770,12 +2754,13 @@ static int gsm48_rr_tx_meas_rep(struct osmocom_ms *ms)
 		uint8_t ncc;
 		int i, index;
 
-		/* multiband reporting, if not: 0 = normal reporting */
-		if (s->si5ter)
-			multi_rep = s->nb_multi_rep_si5ter;
+#if 0
+		/* FIXME: multi-band reporting, if not: 0 = normal reporting */
+		uint8_t multi_rep = s->si5ter ?
+			s->nb_multi_rep_si5ter : 0;
+#endif
 
 		/* get 6 strongest measurements */
-		// FIXME: multiband report
 		strongest = 127; /* infinite */
 		for (n = 0; n < 6; n++) {
 			current = -128; /* -infinite */
@@ -3014,7 +2999,8 @@ static int gsm48_rr_activate_channel(struct osmocom_ms *ms,
 	s->si5 = s->si5bis = s->si5ter = s->si6 = 0;
 
 	if (rr->cipher_on)
-		l1ctl_tx_crypto_req(ms, rr->cipher_type + 1, subscr->key, 8);
+		l1ctl_tx_crypto_req(ms, rr->cd_now.chan_nr,
+			rr->cipher_type + 1, subscr->key, 8);
 
 	return 0;
 }
@@ -3033,7 +3019,8 @@ static int gsm48_rr_channel_after_time(struct osmocom_ms *ms,
 		l1ctl_tx_dm_freq_req_h0(ms, cd->arfcn, cd->tsc, fn);
 
 	if (rr->cipher_on)
-		l1ctl_tx_crypto_req(ms, rr->cipher_type + 1, subscr->key, 8);
+		l1ctl_tx_crypto_req(ms, rr->cd_now.chan_nr,
+			rr->cipher_type + 1, subscr->key, 8);
 
 	gsm48_rr_set_mode(ms, cd->chan_nr, cd->mode);
 
@@ -4761,7 +4748,7 @@ static int gsm48_rr_rx_acch(struct osmocom_ms *ms, struct msgb *msg)
 	struct gsm48_rrlayer *rr = &ms->rrlayer;
 	struct gsm_settings *set = &ms->settings;
 	struct abis_rsl_rll_hdr *rllh = msgb_l2(msg);
-	struct gsm48_system_information_type_header *sih = msgb_l3(msg);
+	struct gsm48_hdr *sih = msgb_l3(msg);
 	uint8_t ind_ta, ind_tx_power;
 
 	if (msgb_l2len(msg) < sizeof(*rllh) + 2 + 2) {
@@ -4785,7 +4772,7 @@ static int gsm48_rr_rx_acch(struct osmocom_ms *ms, struct msgb *msg)
 		rr->cd_now.ind_tx_power = ind_tx_power;
 	}
 
-	switch (sih->system_information) {
+	switch (sih->msg_type) {
 	case GSM48_MT_RR_SYSINFO_5:
 		return gsm48_rr_rx_sysinfo5(ms, msg);
 	case GSM48_MT_RR_SYSINFO_5bis:
@@ -4796,7 +4783,7 @@ static int gsm48_rr_rx_acch(struct osmocom_ms *ms, struct msgb *msg)
 		return gsm48_rr_rx_sysinfo6(ms, msg);
 	default:
 		LOGP(DRR, LOGL_NOTICE, "ACCH message type 0x%02x unknown.\n",
-			sih->system_information);
+			sih->msg_type);
 		return -EINVAL;
 	}
 }
@@ -5577,6 +5564,15 @@ static void timeout_rr_t3124(void *arg)
 	return gsm48_send_rsl(ms, RSL_MT_REEST_REQ, nmsg, 0);
 
 	todo
+}
+
+static void start_rr_t3124(struct gsm48_rrlayer *rr, int sec, int micro)
+{
+	LOGP(DRR, LOGL_INFO, "starting T3124 with %d.%03d seconds\n", sec,
+		micro / 1000);
+	rr->t3124.cb = timeout_rr_t3124;
+	rr->t3124.data = rr;
+	osmo_timer_schedule(&rr->t3124, sec, micro);
 }
 
 /* send HANDOVER ACCESS burst (9.1.14) */

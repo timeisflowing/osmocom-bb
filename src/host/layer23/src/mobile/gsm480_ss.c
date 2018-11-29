@@ -200,8 +200,7 @@ static int gsm480_ss_result(struct osmocom_ms *ms, const char *response,
 	if (response) {
 		char text[256], *t = text, *s;
 
-		strncpy(text, response, sizeof(text) - 1);
-		text[sizeof(text) - 1] = '\0';
+		OSMO_STRLCPY_ARRAY(text, response);
 		while ((s = strchr(text, '\r')))
 			*s = '\n';
 		while ((s = strsep(&t, "\n"))) {
@@ -305,16 +304,6 @@ static inline unsigned char *msgb_wrap_with_L(struct msgb *msgb)
 	uint8_t *data = msgb_push(msgb, 1);
 
 	data[0] = msgb->len - 1;
-	return data;
-}
-
-/* support function taken from OpenBSC */
-static inline unsigned char *msgb_wrap_with_TL(struct msgb *msgb, uint8_t tag)
-{
-	uint8_t *data = msgb_push(msgb, 2);
-
-	data[0] = tag;
-	data[1] = msgb->len - 2;
 	return data;
 }
 
@@ -532,7 +521,7 @@ static int gsm480_tx_ussd(struct gsm_trans *trans, uint8_t msg_type,
 	}
 
 	/* Encode service request */
-	length = gsm_7bit_encode(msg->data, text);
+	gsm_7bit_encode_n_ussd(msg->data, msgb_tailroom(msg), text, &length);
 	msgb_put(msg, length);
 
 	/* Then wrap it as an Octet String */
@@ -603,7 +592,7 @@ int ss_send(struct osmocom_ms *ms, const char *code, int new_trans)
 	}
 
 	/* no running, no transaction */
-	if (!ms->started || ms->shutdown) {
+	if (!ms->started || ms->shutdown != MS_SHUTDOWN_NONE) {
 		gsm480_ss_result(ms, "<phone is down>", 0);
 		return -EIO;
 	}
@@ -655,9 +644,7 @@ int ss_send(struct osmocom_ms *ms, const char *code, int new_trans)
 	
 		/* register */
 		if (ss_code && to && to[0] == '*') {
-			strncpy(dest, to + 1, sizeof(dest) - 1);
-			dest[sizeof(dest) - 1] = '\0';
-			dest[strlen(dest) - 1] = '\0';
+			OSMO_STRLCPY_ARRAY(dest, to + 1);
 			return gsm480_tx_cf(trans, GSM0480_MTYPE_REGISTER,
 				GSM0480_OP_CODE_REGISTER_SS, ss_code, dest);
 		}
@@ -772,11 +759,7 @@ static int gsm480_rx_ussd(struct gsm_trans *trans, const uint8_t *data,
 		return -EINVAL;
 	}
 	num_chars = tag_len * 8 / 7;
-	/* Prevent a mobile-originated buffer-overrun! */
-	if (num_chars > sizeof(text) - 1)
-		num_chars = sizeof(text) - 1;
-	text[sizeof(text) - 1] = '\0';
-	gsm_7bit_decode(text, tag_data, num_chars);
+	gsm_7bit_decode_n_ussd(text, sizeof(text), tag_data, num_chars);
 
 	for (i = 0; text[i]; i++) {
 		if (text[i] == '\r')

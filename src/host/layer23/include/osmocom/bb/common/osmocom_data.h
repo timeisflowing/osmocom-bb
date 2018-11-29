@@ -54,6 +54,13 @@ struct rx_meas_stat {
 	int16_t s, rl_fail;
 };
 
+enum {
+	MS_SHUTDOWN_NONE = 0,
+	MS_SHUTDOWN_IMSI_DETACH = 1,
+	MS_SHUTDOWN_WAIT_RESET = 2,
+	MS_SHUTDOWN_COMPL = 3,
+};
+
 /* One Mobilestation for osmocom */
 struct osmocom_ms {
 	struct llist_head entity;
@@ -62,7 +69,8 @@ struct osmocom_ms {
 	uint16_t test_arfcn;
 	struct osmol1_entity l1_entity;
 
-	uint8_t deleting, shutdown, started;
+	bool started, deleting;
+	uint8_t shutdown;
 	struct gsm_support support;
 	struct gsm_settings settings;
 	struct gsm_subscriber subscr;
@@ -77,6 +85,10 @@ struct osmocom_ms {
 	struct gsm48_cclayer cclayer;
 	struct osmomncc_entity mncc_entity;
 	struct llist_head trans_list;
+
+	void *lua_state;
+	int lua_cb_ref;
+	char *lua_script;
 };
 
 enum osmobb_sig_subsys {

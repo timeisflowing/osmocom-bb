@@ -127,6 +127,24 @@ static const struct log_info_cat default_categories[] = {
 		.color = "\033[1;35m",
 		.enabled = 1, .loglevel = LOGL_DEBUG,
 	},
+	[DMOB] = {
+		.name = "DMOB",
+		.description = "Mobile",
+		.color = "\033[1;35m",
+		.enabled = 1, .loglevel = LOGL_DEBUG,
+	},
+	[DPRIM] = {
+		.name = "DPRIM",
+		.description = "PRIM",
+		.color = "\033[1;32m",
+		.enabled = 1, .loglevel = LOGL_DEBUG,
+	},
+	[DLUA] = {
+		.name = "DLUA",
+		.description = "LUA",
+		.color = "\033[1;32m",
+		.enabled = 1, .loglevel = LOGL_DEBUG,
+	},
 };
 
 const struct log_info log_info = {

@@ -4,6 +4,12 @@
 #define SMS_HDR_SIZE	128
 #define SMS_TEXT_SIZE	256
 
+#include <stdint.h>
+#include <time.h>
+
+struct osmocom_ms;
+struct msgb;
+
 struct gsm_sms {
 	unsigned long validity_minutes;
 	uint8_t reply_path_req;
@@ -28,6 +34,8 @@ void sms_free(struct gsm_sms *sms);
 struct gsm_sms *sms_from_text(const char *receiver, int dcs, const char *text);
 int gsm411_rcv_sms(struct osmocom_ms *ms, struct msgb *msg);
 int sms_send(struct osmocom_ms *ms, const char *sms_sca, const char *number,
-	const char *text);
+	const char *text, uint8_t msg_ref);
+int gsm411_tx_sms_submit(struct osmocom_ms *ms, const char *sms_sca,
+	struct gsm_sms *sms);
 
 #endif /* _GSM411_SMS_H */

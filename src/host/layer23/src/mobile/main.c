@@ -38,7 +38,6 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -47,17 +46,11 @@
 #include <time.h>
 #include <libgen.h>
 
-struct log_target *stderr_target;
-
 void *l23_ctx = NULL;
 struct llist_head ms_list;
 static char *gsmtap_ip = 0;
-static const char *config_file = ".osmocom/bb/mobile.cfg";
-bool use_default_cfg = true;
+static const char *custom_cfg_file = NULL;
 struct gsmtap_inst *gsmtap_inst = NULL;
-static char *vty_ip = "127.0.0.1";
-unsigned short vty_port = 4247;
-int debug_set = 0;
 char *config_dir = NULL;
 int use_mncc_sock = 0;
 int daemonize = 0;
@@ -72,7 +65,7 @@ int mobile_exit(struct osmocom_ms *ms, int force);
 
 
 const char *debug_default =
-	"DCS:DNB:DPLMN:DRR:DMM:DSIM:DCC:DMNCC:DSS:DLSMS:DPAG:DSUM:DSAP";
+	"DCS:DNB:DPLMN:DRR:DMM:DSIM:DCC:DMNCC:DSS:DLSMS:DPAG:DSUM:DSAP:DGPS:DMOB:DPRIM:DLUA";
 
 const char *openbsc_copyright =
 	"Copyright (C) 2010-2015 Andreas Eversberg, Sylvain Munaut, Holger Freyther, Harald Welte\n"
@@ -92,10 +85,6 @@ static void print_help()
 	printf(" Some help...\n");
 	printf("  -h --help		this text\n");
 	printf("  -i --gsmtap-ip	The destination IP used for GSMTAP.\n");
-	printf("  -u --vty-ip           The VTY IP to telnet to. "
-		"(default %s)\n", vty_ip);
-	printf("  -v --vty-port		The VTY port number to telnet to. "
-		"(default %u)\n", vty_port);
 	printf("  -d --debug		Change debug flags. default: %s\n",
 		debug_default);
 	printf("  -D --daemonize	Run as daemon\n");
@@ -104,19 +93,20 @@ static void print_help()
 		"offer socket\n");
 }
 
-static void handle_options(int argc, char **argv)
+static int handle_options(int argc, char **argv)
 {
 	while (1) {
 		int option_index = 0, c;
 		static struct option long_options[] = {
 			{"help", 0, 0, 'h'},
 			{"gsmtap-ip", 1, 0, 'i'},
-			{"vty-ip", 1, 0, 'u'},
-			{"vty-port", 1, 0, 'v'},
 			{"debug", 1, 0, 'd'},
 			{"daemonize", 0, 0, 'D'},
 			{"config-file", 1, 0, 'c'},
 			{"mncc-sock", 0, 0, 'm'},
+			/* DEPRECATED options, to be removed */
+			{"vty-ip", 1, 0, 'u'},
+			{"vty-port", 1, 0, 'v'},
 			{0, 0, 0, 0},
 		};
 
@@ -134,19 +124,11 @@ static void handle_options(int argc, char **argv)
 		case 'i':
 			gsmtap_ip = optarg;
 			break;
-		case 'u':
-			vty_ip = optarg;
-			break;
 		case 'c':
-			config_file = optarg;
-			use_default_cfg = false;
-			break;
-		case 'v':
-			vty_port = atoi(optarg);
+			custom_cfg_file = optarg;
 			break;
 		case 'd':
-			log_parse_category_mask(stderr_target, optarg);
-			debug_set = 1;
+			log_parse_category_mask(osmo_stderr_target, optarg);
 			break;
 		case 'D':
 			daemonize = 1;
@@ -154,10 +136,20 @@ static void handle_options(int argc, char **argv)
 		case 'm':
 			use_mncc_sock = 1;
 			break;
+		/* DEPRECATED options, to be removed */
+		case 'u':
+		case 'v':
+			fprintf(stderr, "Both 'u' and 'v' options are "
+				"deprecated! Please use the configuration file "
+				"in order to set VTY bind address.\n");
+			/* fall-thru */
 		default:
-			break;
+			/* Unknown parameter passed */
+			return -EINVAL;
 		}
 	}
+
+	return 0;
 }
 
 void sighandler(int sigset)
@@ -208,28 +200,28 @@ void sighandler(int sigset)
 
 int main(int argc, char **argv)
 {
+	char *config_file;
 	int quit = 0;
 	int rc;
-	char const * home;
 
 	printf("%s\n", openbsc_copyright);
 
 	srand(time(NULL));
 
 	INIT_LLIST_HEAD(&ms_list);
-	log_init(&log_info, NULL);
-	stderr_target = log_target_create_stderr();
-	log_add_target(stderr_target);
-	log_set_all_filter(stderr_target, 1);
 
 	l23_ctx = talloc_named_const(NULL, 1, "layer2 context");
-	msgb_set_talloc_ctx(l23_ctx);
+	/* TODO: measure and choose a proper pool size */
+	msgb_talloc_ctx_init(l23_ctx, 0);
 
-	handle_options(argc, argv);
+	/* Init default stderr logging */
+	osmo_init_logging2(l23_ctx, &log_info);
 
-	if (!debug_set)
-		log_parse_category_mask(stderr_target, debug_default);
-	log_set_log_level(stderr_target, LOGL_DEBUG);
+	rc = handle_options(argc, argv);
+	if (rc) { /* Abort in case of parsing errors */
+		fprintf(stderr, "Error in command line options. Exiting.\n");
+		return 1;
+	}
 
 	if (gsmtap_ip) {
 		gsmtap_inst = gsmtap_source_init(gsmtap_ip, GSMTAP_UDP_PORT, 1);
@@ -240,9 +232,18 @@ int main(int argc, char **argv)
 		gsmtap_source_add_sink(gsmtap_inst);
 	}
 
-	if (use_default_cfg) {
-		home = talloc_strdup(l23_ctx, getenv("HOME"));
-		config_file = talloc_asprintf_append(home, "/%s", config_file);
+	if (custom_cfg_file) {
+		/* Use full path provided by user */
+		config_file = talloc_strdup(l23_ctx, custom_cfg_file);
+	} else {
+		/* Obtain the user's home directory path */
+		const char *home_dir = getenv("HOME");
+		if (!home_dir)
+			home_dir = "~";
+
+		/* Concatenate it with default config path */
+		config_file = talloc_asprintf(l23_ctx, "%s/%s",
+			home_dir, ".osmocom/bb/mobile.cfg");
 	}
 
 	/* save the config file directory name */
@@ -250,9 +251,9 @@ int main(int argc, char **argv)
 	config_dir = dirname(config_dir);
 
 	if (use_mncc_sock)
-		rc = l23_app_init(mncc_recv_socket, config_file, vty_ip, vty_port);
+		rc = l23_app_init(mncc_recv_socket, config_file);
 	else
-		rc = l23_app_init(NULL, config_file, vty_ip, vty_port);
+		rc = l23_app_init(NULL, config_file);
 	if (rc)
 		exit(rc);
 
@@ -280,6 +281,7 @@ int main(int argc, char **argv)
 	}
 
 	l23_app_exit();
+	log_fini();
 
 	talloc_free(config_file);
 	talloc_free(config_dir);

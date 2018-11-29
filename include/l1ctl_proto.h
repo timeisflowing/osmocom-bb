@@ -56,6 +56,7 @@ enum {
 	L1CTL_TRAFFIC_REQ,
 	L1CTL_TRAFFIC_CONF,
 	L1CTL_TRAFFIC_IND,
+	L1CTL_BURST_IND,
 
 	/* configure TBF for uplink/downlink */
 	L1CTL_TBF_CFG_REQ,
@@ -69,6 +70,7 @@ enum ccch_mode {
 	CCCH_MODE_NONE = 0,
 	CCCH_MODE_NON_COMBINED,
 	CCCH_MODE_COMBINED,
+	CCCH_MODE_COMBINED_CBCH,
 };
 
 enum neigh_mode {
@@ -93,8 +95,6 @@ enum l1ctl_coding_scheme {
 	L1CTL_MCS8,
 	L1CTL_MCS9,
 };
-
-#define TRAFFIC_DATA_LEN	40
 
 /*
  * NOTE: struct size. We do add manual padding out of the believe
@@ -160,7 +160,7 @@ struct l1ctl_data_ind {
 
 /* traffic from the network */
 struct l1ctl_traffic_ind {
-	uint8_t data[TRAFFIC_DATA_LEN];
+	uint8_t data[0];
 } __attribute__((packed));
 
 /*
@@ -280,6 +280,7 @@ struct l1ctl_dm_freq_req {
 
 struct l1ctl_crypto_req {
 	uint8_t algo;
+	uint8_t key_len;
 	uint8_t key[0];
 } __attribute__((packed));
 
@@ -293,6 +294,19 @@ struct l1ctl_pm_req {
 			uint16_t band_arfcn_to;
 		} range;
 	};
+} __attribute__((packed));
+
+#define BI_FLG_DUMMY (1 << 4)
+#define BI_FLG_SACCH (1 << 5)
+
+struct l1ctl_burst_ind {
+	uint32_t frame_nr;
+	uint16_t band_arfcn;    /* ARFCN + band + ul indicator               */
+	uint8_t chan_nr;        /* GSM 08.58 channel number (9.3.1)          */
+	uint8_t flags;          /* BI_FLG_xxx + burst_id = 2LSBs             */
+	uint8_t rx_level;       /* 0 .. 63 in typical GSM notation (dBm+110) */
+	uint8_t snr;            /* Reported SNR >> 8 (0-255)                 */
+	uint8_t bits[15];       /* 114 bits + 2 steal bits. Filled MSB first */
 } __attribute__((packed));
 
 /* a single L1CTL_PM response */
@@ -330,7 +344,7 @@ struct l1ctl_neigh_pm_ind {
 
 /* traffic data to network */
 struct l1ctl_traffic_req {
-	uint8_t data[TRAFFIC_DATA_LEN];
+	uint8_t data[0];
 } __attribute__((packed));
 
 struct l1ctl_tbf_cfg_req {

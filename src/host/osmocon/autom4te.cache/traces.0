@@ -123,10 +123,10 @@ AS_VAR_IF([$1], [""], [$5], [$4])dnl
 m4trace:/usr/share/aclocal-1.15/amversion.m4:14: -1- AC_DEFUN([AM_AUTOMAKE_VERSION], [am__api_version='1.15'
 dnl Some users find AM_AUTOMAKE_VERSION and mistake it for a way to
 dnl require some minimum version.  Point them to the right macro.
-m4_if([$1], [1.15], [],
+m4_if([$1], [1.15.1], [],
       [AC_FATAL([Do not call $0, use AM_INIT_AUTOMAKE([$1]).])])dnl
 ])
-m4trace:/usr/share/aclocal-1.15/amversion.m4:33: -1- AC_DEFUN([AM_SET_CURRENT_AUTOMAKE_VERSION], [AM_AUTOMAKE_VERSION([1.15])dnl
+m4trace:/usr/share/aclocal-1.15/amversion.m4:33: -1- AC_DEFUN([AM_SET_CURRENT_AUTOMAKE_VERSION], [AM_AUTOMAKE_VERSION([1.15.1])dnl
 m4_ifndef([AC_AUTOCONF_VERSION],
   [m4_copy([m4_PACKAGE_VERSION], [AC_AUTOCONF_VERSION])])dnl
 _AM_AUTOCONF_VERSION(m4_defn([AC_AUTOCONF_VERSION]))])
@@ -927,7 +927,7 @@ m4trace:configure.ac:2: -1- m4_pattern_allow([^target_alias$])
 m4trace:configure.ac:6: -1- AM_INIT_AUTOMAKE([dist-bzip2])
 m4trace:configure.ac:6: -1- m4_pattern_allow([^AM_[A-Z]+FLAGS$])
 m4trace:configure.ac:6: -1- AM_SET_CURRENT_AUTOMAKE_VERSION
-m4trace:configure.ac:6: -1- AM_AUTOMAKE_VERSION([1.15])
+m4trace:configure.ac:6: -1- AM_AUTOMAKE_VERSION([1.15.1])
 m4trace:configure.ac:6: -1- _AM_AUTOCONF_VERSION([2.69])
 m4trace:configure.ac:6: -1- m4_pattern_allow([^INSTALL_PROGRAM$])
 m4trace:configure.ac:6: -1- m4_pattern_allow([^INSTALL_SCRIPT$])
@@ -1078,13 +1078,13 @@ m4trace:configure.ac:20: -1- m4_pattern_allow([^CPP$])
 m4trace:configure.ac:20: -1- m4_pattern_allow([^GREP$])
 m4trace:configure.ac:20: -1- m4_pattern_allow([^EGREP$])
 m4trace:configure.ac:20: -1- m4_pattern_allow([^STDC_HEADERS$])
-m4trace:configure.ac:24: -1- _m4_warn([obsolete], [AC_OUTPUT should be used without arguments.
+m4trace:configure.ac:51: -1- _m4_warn([obsolete], [AC_OUTPUT should be used without arguments.
 You should run autoupdate.], [])
-m4trace:configure.ac:24: -1- m4_pattern_allow([^LIB@&t@OBJS$])
-m4trace:configure.ac:24: -1- m4_pattern_allow([^LTLIBOBJS$])
-m4trace:configure.ac:24: -1- AM_CONDITIONAL([am__EXEEXT], [test -n "$EXEEXT"])
-m4trace:configure.ac:24: -1- m4_pattern_allow([^am__EXEEXT_TRUE$])
-m4trace:configure.ac:24: -1- m4_pattern_allow([^am__EXEEXT_FALSE$])
-m4trace:configure.ac:24: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_TRUE])
-m4trace:configure.ac:24: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_FALSE])
-m4trace:configure.ac:24: -1- _AM_OUTPUT_DEPENDENCY_COMMANDS
+m4trace:configure.ac:51: -1- m4_pattern_allow([^LIB@&t@OBJS$])
+m4trace:configure.ac:51: -1- m4_pattern_allow([^LTLIBOBJS$])
+m4trace:configure.ac:51: -1- AM_CONDITIONAL([am__EXEEXT], [test -n "$EXEEXT"])
+m4trace:configure.ac:51: -1- m4_pattern_allow([^am__EXEEXT_TRUE$])
+m4trace:configure.ac:51: -1- m4_pattern_allow([^am__EXEEXT_FALSE$])
+m4trace:configure.ac:51: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_TRUE])
+m4trace:configure.ac:51: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_FALSE])
+m4trace:configure.ac:51: -1- _AM_OUTPUT_DEPENDENCY_COMMANDS

@@ -7,8 +7,9 @@ deps="$base/deps"
 inst="$deps/install"
 export deps inst
 
+osmo-clean-workspace.sh
+
 mkdir "$deps" || true
-rm -rf "$inst"
 
 osmo-build-dep.sh libosmocore "" ac_cv_path_DOXYGEN=false
 
@@ -26,7 +27,12 @@ echo " =============================== OsmocomBB ===============================
 echo
 set -x
 
-cd src/host/layer23
-autoreconf -fi
-./configure
-make
+
+for dir in gprsdecode gsmmap layer23 osmocon trxcon virt_phy; do
+	cd $base/src/host/$dir
+	autoreconf -fi
+	./configure
+	make
+done
+
+osmo-clean-workspace.sh

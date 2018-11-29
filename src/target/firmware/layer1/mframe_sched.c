@@ -198,6 +198,16 @@ static const struct mframe_sched_item mf_sdcch8_7[] = {
 	{ .sched_set = NULL }
 };
 
+/* CBCH replaces sub-slot 2 of SDCCH, see GSM 05.02, section 6.4 */
+static const struct mframe_sched_item mf_sdcch8_cbch[] = {
+	{ .sched_set = NB_QUAD_FH_DL, .modulo = 51, .frame_nr = 8 },
+	{ .sched_set = NULL }
+};
+static const struct mframe_sched_item mf_sdcch4_cbch[] = {
+	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 32 },
+	{ .sched_set = NULL }
+};
+
 /* Measurement for MF 51 C0 */
 static const struct mframe_sched_item mf_neigh_pm51_c0t0[] = {
 	{ .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 0 },
@@ -327,6 +337,9 @@ static const struct mframe_sched_item *sched_set_for_task[32] = {
 	[MF_TASK_SDCCH8_6] = mf_sdcch8_6,
 	[MF_TASK_SDCCH8_7] = mf_sdcch8_7,
 
+	[MF_TASK_SDCCH4_CBCH] = mf_sdcch4_cbch,
+	[MF_TASK_SDCCH8_CBCH] = mf_sdcch8_cbch,
+
 	[MF_TASK_TCH_F_EVEN] = mf_tch_f_even,
 	[MF_TASK_TCH_F_ODD]  = mf_tch_f_odd,
 	[MF_TASK_TCH_H_0]    = mf_tch_h_0,
@@ -400,10 +413,20 @@ uint8_t mframe_task2chan_nr(enum mframe_task mft, uint8_t ts)
 	case MF_TASK_TCH_H_1:
 		cbits = 0x02 + 1;
 		break;
-	case MF_TASK_UL_ALL_NB:
-		/* ERROR: cannot express as channel number */
-		cbits = 0;
+
+	/* Osmocom specific extensions */
+	case MF_TASK_SDCCH4_CBCH:
+		cbits = 0x18;
 		break;
+	case MF_TASK_SDCCH8_CBCH:
+		cbits = 0x19;
+		break;
+
+	case MF_TASK_UL_ALL_NB:
+	default:
+		printd("ERROR: cannot express mf_task=%d as "
+			"channel number, using 0x00\n", mft);
+		cbits = 0x00;
 	}
 
 	return (cbits << 3) | (ts & 0x7);

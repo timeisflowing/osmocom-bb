@@ -30,16 +30,14 @@
 #include <osmocom/bb/common/logging.h>
 #include <osmocom/bb/common/osmocom_data.h>
 #include <osmocom/bb/mobile/mncc.h>
+#include <osmocom/bb/mobile/mncc_ms.h>
 #include <osmocom/bb/mobile/vty.h>
 
-void *l23_ctx;
 static uint32_t new_callref = 1;
 static LLIST_HEAD(call_list);
 
-void mncc_set_cause(struct gsm_mncc *data, int loc, int val);
 static int dtmf_statemachine(struct gsm_call *call, struct gsm_mncc *mncc);
 static void timeout_dtmf(void *arg);
-int mncc_answer(struct osmocom_ms *ms);
 
 /*
  * support functions
@@ -287,7 +285,7 @@ int mncc_recv_mobile(struct osmocom_ms *ms, int msg_type, void *arg)
 	if (!call) {
 		if (llist_empty(&call_list))
 			first_call = 1;
-		call = talloc_zero(l23_ctx, struct gsm_call);
+		call = talloc_zero(ms, struct gsm_call);
 		if (!call)
 			return -ENOMEM;
 		call->ms = ms;
@@ -296,7 +294,7 @@ int mncc_recv_mobile(struct osmocom_ms *ms, int msg_type, void *arg)
 	}
 
 	/* not in initiated state anymore */
-	call->init = 0;
+	call->init = false;
 
 	switch (msg_type) {
 	case MNCC_DISC_IND:
@@ -480,9 +478,9 @@ int mncc_recv_mobile(struct osmocom_ms *ms, int msg_type, void *arg)
 			LOGP(DMNCC, LOGL_INFO, "Ring!\n");
 		else {
 			LOGP(DMNCC, LOGL_INFO, "Knock!\n");
-			call->hold = 1;
+			call->hold = true;
 		}
-		call->ring = 1;
+		call->ring = true;
 		memset(&mncc, 0, sizeof(struct gsm_mncc));
 		mncc.callref = call->callref;
 		mncc_tx_to_cc(ms, MNCC_ALERT_REQ, &mncc);
@@ -500,7 +498,7 @@ int mncc_recv_mobile(struct osmocom_ms *ms, int msg_type, void *arg)
 		vty_notify(ms, NULL);
 		vty_notify(ms, "Call is on hold\n");
 		LOGP(DMNCC, LOGL_INFO, "Call is on hold\n");
-		call->hold = 1;
+		call->hold = true;
 		break;
 	case MNCC_HOLD_REJ:
 		vty_notify(ms, NULL);
@@ -511,7 +509,7 @@ int mncc_recv_mobile(struct osmocom_ms *ms, int msg_type, void *arg)
 		vty_notify(ms, NULL);
 		vty_notify(ms, "Call is retrieved\n");
 		LOGP(DMNCC, LOGL_INFO, "Call is retrieved\n");
-		call->hold = 0;
+		call->hold = false;
 		break;
 	case MNCC_RETRIEVE_REJ:
 		vty_notify(ms, NULL);
@@ -551,12 +549,12 @@ int mncc_call(struct osmocom_ms *ms, char *number)
 		}
 	}
 
-	call = talloc_zero(l23_ctx, struct gsm_call);
+	call = talloc_zero(ms, struct gsm_call);
 	if (!call)
 		return -ENOMEM;
 	call->ms = ms;
 	call->callref = new_callref++;
-	call->init = 1;
+	call->init = true;
 	llist_add_tail(&call->entry, &call_list);
 
 	memset(&setup, 0, sizeof(struct gsm_mncc));
@@ -577,8 +575,7 @@ int mncc_call(struct osmocom_ms *ms, char *number)
 			setup.called.type = 0; /* auto/unknown - prefix must be
 						  used */
 		setup.called.plan = 1; /* ISDN */
-		strncpy(setup.called.number, number,
-			sizeof(setup.called.number) - 1);
+		OSMO_STRLCPY_ARRAY(setup.called.number, number);
 
 		/* bearer capability (mandatory) */
 		mncc_set_bearer(ms, -1, &setup);
@@ -649,8 +646,8 @@ int mncc_answer(struct osmocom_ms *ms)
 		vty_notify(ms, "Please put active call on hold first!\n");
 		return -EBUSY;
 	}
-	alerting->ring = 0;
-	alerting->hold = 0;
+	alerting->ring = false;
+	alerting->hold = false;
 
 	memset(&rsp, 0, sizeof(struct gsm_mncc));
 	rsp.callref = alerting->callref;
@@ -809,7 +806,7 @@ int mncc_dtmf(struct osmocom_ms *ms, char *dtmf)
 	}
 
 	call->dtmf_index = 0;
-	strncpy(call->dtmf, dtmf, sizeof(call->dtmf) - 1);
+	OSMO_STRLCPY_ARRAY(call->dtmf, dtmf);
 	return dtmf_statemachine(call, NULL);
 }
 

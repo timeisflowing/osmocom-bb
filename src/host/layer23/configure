@@ -589,6 +589,11 @@ LIBOBJS
 EGREP
 GREP
 CPP
+BUILD_LUA_FALSE
+BUILD_LUA_TRUE
+WITH_LUA
+LIBLUA_LIBS
+LIBLUA_CFLAGS
 LIBGPS_LIBS
 LIBGPS_CFLAGS
 LIBOSMOCODEC_LIBS
@@ -691,6 +696,8 @@ ac_user_opts='
 enable_option_checking
 enable_silent_rules
 enable_dependency_tracking
+enable_sanitize
+enable_werror
 '
       ac_precious_vars='build_alias
 host_alias
@@ -711,6 +718,8 @@ LIBOSMOGSM_CFLAGS
 LIBOSMOGSM_LIBS
 LIBOSMOCODEC_CFLAGS
 LIBOSMOCODEC_LIBS
+LIBLUA_CFLAGS
+LIBLUA_LIBS
 CPP'
 
 
@@ -1343,6 +1352,12 @@ Optional Features:
                           do not reject slow dependency extractors
   --disable-dependency-tracking
                           speeds up one-time build
+  --enable-sanitize       Compile with address sanitizer enabled
+  --enable-werror         Turn all compiler warnings into errors, with
+                          exceptions: a) deprecation (allow upstream to mark
+                          deprecation without breaking builds); b) "#warning"
+                          pragmas (allow to remind ourselves of errors without
+                          breaking builds)
 
 Some influential environment variables:
   CC          C compiler command
@@ -1373,6 +1388,9 @@ Some influential environment variables:
               C compiler flags for LIBOSMOCODEC, overriding pkg-config
   LIBOSMOCODEC_LIBS
               linker flags for LIBOSMOCODEC, overriding pkg-config
+  LIBLUA_CFLAGS
+              C compiler flags for LIBLUA, overriding pkg-config
+  LIBLUA_LIBS linker flags for LIBLUA, overriding pkg-config
   CPP         C preprocessor
 
 Use these variables to override the choices made by `configure' or to help
@@ -3782,6 +3800,35 @@ else
 fi
 
 
+# Check whether --enable-sanitize was given.
+if test "${enable_sanitize+set}" = set; then :
+  enableval=$enable_sanitize; sanitize=$enableval
+else
+  sanitize="no"
+fi
+
+if test x"$sanitize" = x"yes"
+then
+	CFLAGS="$CFLAGS -fsanitize=address -fsanitize=undefined"
+	CPPFLAGS="$CPPFLAGS -fsanitize=address -fsanitize=undefined"
+fi
+
+# Check whether --enable-werror was given.
+if test "${enable_werror+set}" = set; then :
+  enableval=$enable_werror; werror=$enableval
+else
+  werror="no"
+fi
+
+if test x"$werror" = x"yes"
+then
+	WERROR_FLAGS="-Werror"
+	WERROR_FLAGS+=" -Wno-error=deprecated -Wno-error=deprecated-declarations"
+	WERROR_FLAGS+=" -Wno-error=cpp" # "#warning"
+	CFLAGS="$CFLAGS $WERROR_FLAGS"
+	CPPFLAGS="$CPPFLAGS $WERROR_FLAGS"
+fi
+
 
 
 
@@ -4002,12 +4049,12 @@ if test -n "$LIBOSMOVTY_CFLAGS"; then
     pkg_cv_LIBOSMOVTY_CFLAGS="$LIBOSMOVTY_CFLAGS"
  elif test -n "$PKG_CONFIG"; then
     if test -n "$PKG_CONFIG" && \
-    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libosmovty\""; } >&5
-  ($PKG_CONFIG --exists --print-errors "libosmovty") 2>&5
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libosmovty >= 0.10.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libosmovty >= 0.10.0") 2>&5
   ac_status=$?
   $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; then
-  pkg_cv_LIBOSMOVTY_CFLAGS=`$PKG_CONFIG --cflags "libosmovty" 2>/dev/null`
+  pkg_cv_LIBOSMOVTY_CFLAGS=`$PKG_CONFIG --cflags "libosmovty >= 0.10.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes
 else
   pkg_failed=yes
@@ -4019,12 +4066,12 @@ if test -n "$LIBOSMOVTY_LIBS"; then
     pkg_cv_LIBOSMOVTY_LIBS="$LIBOSMOVTY_LIBS"
  elif test -n "$PKG_CONFIG"; then
     if test -n "$PKG_CONFIG" && \
-    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libosmovty\""; } >&5
-  ($PKG_CONFIG --exists --print-errors "libosmovty") 2>&5
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libosmovty >= 0.10.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libosmovty >= 0.10.0") 2>&5
   ac_status=$?
   $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; then
-  pkg_cv_LIBOSMOVTY_LIBS=`$PKG_CONFIG --libs "libosmovty" 2>/dev/null`
+  pkg_cv_LIBOSMOVTY_LIBS=`$PKG_CONFIG --libs "libosmovty >= 0.10.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes
 else
   pkg_failed=yes
@@ -4045,14 +4092,14 @@ else
         _pkg_short_errors_supported=no
 fi
         if test $_pkg_short_errors_supported = yes; then
-	        LIBOSMOVTY_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libosmovty" 2>&1`
+	        LIBOSMOVTY_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libosmovty >= 0.10.0" 2>&1`
         else
-	        LIBOSMOVTY_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libosmovty" 2>&1`
+	        LIBOSMOVTY_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libosmovty >= 0.10.0" 2>&1`
         fi
 	# Put the nasty error message in config.log where it belongs
 	echo "$LIBOSMOVTY_PKG_ERRORS" >&5
 
-	as_fn_error $? "Package requirements (libosmovty) were not met:
+	as_fn_error $? "Package requirements (libosmovty >= 0.10.0) were not met:
 
 $LIBOSMOVTY_PKG_ERRORS
 
@@ -4309,6 +4356,90 @@ fi
 
 
 
+
+
+
+pkg_failed=no
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for LIBLUA" >&5
+$as_echo_n "checking for LIBLUA... " >&6; }
+
+if test -n "$LIBLUA_CFLAGS"; then
+    pkg_cv_LIBLUA_CFLAGS="$LIBLUA_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua53\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "lua53") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBLUA_CFLAGS=`$PKG_CONFIG --cflags "lua53" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBLUA_LIBS"; then
+    pkg_cv_LIBLUA_LIBS="$LIBLUA_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua53\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "lua53") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBLUA_LIBS=`$PKG_CONFIG --libs "lua53" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+	        LIBLUA_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "lua53" 2>&1`
+        else
+	        LIBLUA_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "lua53" 2>&1`
+        fi
+	# Put the nasty error message in config.log where it belongs
+	echo "$LIBLUA_PKG_ERRORS" >&5
+
+
+	WITH_LUA=0
+elif test $pkg_failed = untried; then
+     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+	WITH_LUA=0
+else
+	LIBLUA_CFLAGS=$pkg_cv_LIBLUA_CFLAGS
+	LIBLUA_LIBS=$pkg_cv_LIBLUA_LIBS
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+
+	WITH_LUA=1
+fi
+
+ if test "x$WITH_LUA" = "x1"; then
+  BUILD_LUA_TRUE=
+  BUILD_LUA_FALSE='#'
+else
+  BUILD_LUA_TRUE='#'
+  BUILD_LUA_FALSE=
+fi
 
 
 ac_ext=c
@@ -4862,6 +4993,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${am__fastdepCC_TRUE}" && test -z "${am__fastdepCC_FALSE}"; then
   as_fn_error $? "conditional \"am__fastdepCC\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${BUILD_LUA_TRUE}" && test -z "${BUILD_LUA_FALSE}"; then
+  as_fn_error $? "conditional \"BUILD_LUA\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 

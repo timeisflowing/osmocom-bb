@@ -97,6 +97,11 @@ static uint32_t chan_nr2mf_task_mask(uint8_t chan_nr, uint8_t neigh_mode)
 		lch_idx = cbits & 0x7;
 		master_task = MF_TASK_SDCCH8_0 + lch_idx;
 		multiframe = MF51;
+	} else if ((cbits & 0x1e) == 0x18) {
+		/* Osmocom specific extension for CBCH */
+		master_task = (cbits & 0x01) ? /* 0b1100T */
+			MF_TASK_SDCCH4_CBCH : MF_TASK_SDCCH8_CBCH;
+		multiframe = MF51;
 #if 0
 	} else if (cbits == 0x10) {
 		/* FIXME: when to do extended BCCH? */
@@ -136,7 +141,12 @@ static int  chan_nr2dchan_type(uint8_t chan_nr)
 		return GSM_DCHAN_SDCCH_4;
 	} else if ((cbits & 0x18) == 0x08) {
 		return GSM_DCHAN_SDCCH_8;
+	} else if ((cbits & 0x1e) == 0x18) {
+		/* Osmocom-specific extension for CBCH */
+		return (cbits & 0x01) ? /* 0b1100T */
+			GSM_DCHAN_SDCCH_8_CBCH : GSM_DCHAN_SDCCH_4_CBCH;
 	}
+
 	return GSM_DCHAN_UNKNOWN;
 }
 
@@ -301,11 +311,10 @@ static void l1ctl_rx_crypto_req(struct msgb *msg)
 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
 	struct l1ctl_crypto_req *cr = (struct l1ctl_crypto_req *) ul->payload;
-	uint8_t key_len = msg->len - sizeof(*l1h) - sizeof(*ul) - sizeof(*cr);
 
-	printd("L1CTL_CRYPTO_REQ (algo=A5/%u, len=%u)\n", cr->algo, key_len);
+	printd("L1CTL_CRYPTO_REQ (algo=A5/%u, len=%u)\n", cr->algo, cr->key_len);
 
-	if (cr->algo && key_len != 8) {
+	if (cr->algo && cr->key_len != 8) {
 		printd("L1CTL_CRYPTO_REQ -> Invalid key\n");
 		return;
 	}
@@ -338,7 +347,7 @@ static void l1ctl_rx_param_req(struct msgb *msg)
 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
 	struct l1ctl_par_req *par_req = (struct l1ctl_par_req *) ul->payload;
 
-	printd("L1CTL_PARAM_REQ (ta=%d, tx_power=%d)\n", par_req->ta,
+	printd("L1CTL_PARAM_REQ (ta=%d, tx_power=%u)\n", par_req->ta,
 		par_req->tx_power);
 
 	l1s.ta = par_req->ta;
@@ -480,6 +489,10 @@ static void l1ctl_rx_ccch_mode_req(struct msgb *msg)
 		mframe_enable(MF_TASK_CCCH_COMB);
 	else if (ccch_mode == CCCH_MODE_NON_COMBINED)
 		mframe_enable(MF_TASK_CCCH);
+	else if (ccch_mode == CCCH_MODE_COMBINED_CBCH) {
+		mframe_enable(MF_TASK_CCCH_COMB);
+		mframe_enable(MF_TASK_SDCCH4_CBCH);
+	}
 
 	l1ctl_tx_ccch_mode_conf(ccch_mode);
 }

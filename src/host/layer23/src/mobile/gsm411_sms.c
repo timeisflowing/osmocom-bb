@@ -41,6 +41,7 @@
 #include <osmocom/gsm/gsm0411_utils.h>
 #include <osmocom/core/talloc.h>
 #include <osmocom/bb/mobile/vty.h>
+#include <osmocom/bb/mobile/primitives.h>
 
 #define UM_SAPI_SMS 3
 
@@ -104,7 +105,7 @@ struct gsm_sms *sms_from_text(const char *receiver, int dcs, const char *text)
 	if (!sms)
 		return NULL;
 
-	strncpy(sms->text, text, sizeof(sms->text)-1);
+	OSMO_STRLCPY_ARRAY(sms->text, text);
 
 	/* FIXME: don't use ID 1 static */
 	sms->reply_path_req = 0;
@@ -118,9 +119,10 @@ struct gsm_sms *sms_from_text(const char *receiver, int dcs, const char *text)
 		sms->data_coding_scheme = 0xC0;
 	else
 		sms->data_coding_scheme = dcs;
-	strncpy(sms->address, receiver, sizeof(sms->address)-1);
+	OSMO_STRLCPY_ARRAY(sms->address, receiver);
 	/* Generate user_data */
-	sms->user_data_len = gsm_7bit_encode(sms->user_data, sms->text);
+	sms->user_data_len = gsm_7bit_encode_n(sms->user_data,
+		sizeof(sms->user_data), sms->text, NULL);
 
 	return sms;
 }
@@ -135,6 +137,7 @@ static int gsm411_sms_report(struct osmocom_ms *ms, struct gsm_sms *sms,
 		vty_notify(ms, "SMS to %s failed: %s\n", sms->address,
 			get_value_string(gsm411_rp_cause_strs, cause));
 
+	mobile_prim_ntfy_sms_status(ms, sms, cause);
 	return 0;
 }
 /*
@@ -181,12 +184,11 @@ static int gsm411_trans_free(struct gsm_trans *trans)
  * receive SMS
  */
 
-/* now here comes our SMS */
-static int gsm340_rx_sms_deliver(struct osmocom_ms *ms, struct msgb *msg,
+/* store the SMS to disk */
+static int sms_store(struct osmocom_ms *ms, struct msgb *msg,
 	struct gsm_sms *gsms)
 {
 	const char osmocomsms[] = ".osmocom/bb/sms.txt";
-	int len;
 	const char *home;
 	char *sms_file;
 	char vty_text[sizeof(gsms->text)], *p;
@@ -208,15 +210,15 @@ fail:
 			"your home directory.\n", osmocomsms);
 		return GSM411_RP_CAUSE_MT_MEM_EXCEEDED;
 	}
-	len = strlen(home) + 1 + sizeof(osmocomsms);
-	sms_file = talloc_size(l23_ctx, len);
+	sms_file = talloc_asprintf(l23_ctx, "%s/%s", home, osmocomsms);
 	if (!sms_file)
 		goto fail;
-	snprintf(sms_file, len, "%s/%s", home, osmocomsms);
 
 	fp = fopen(sms_file, "a");
-	if (!fp)
+	if (!fp) {
+		talloc_free(sms_file);
 		goto fail;
+	}
 	fprintf(fp, "[SMS from %s]\n%s\n", gsms->address, gsms->text);
 	fclose(fp);
 
@@ -225,23 +227,34 @@ fail:
 	return 0;
 }
 
+/* now here comes our SMS */
+static int gsm340_rx_sms_deliver(struct osmocom_ms *ms, struct msgb *msg,
+	struct gsm_sms *gsms)
+{
+	mobile_prim_ntfy_sms_new(ms, gsms);
+	if (!ms->settings.store_sms)
+		return 0;
+	return sms_store(ms, msg, gsms);
+}
+
 /* process an incoming TPDU (called from RP-DATA)
  * return value > 0: RP CAUSE for ERROR; < 0: silent error; 0 = success */
-static int gsm340_rx_tpdu(struct gsm_trans *trans, struct msgb *msg)
+static int gsm340_rx_tpdu(struct gsm_trans *trans, struct msgb *msg, uint8_t msg_ref)
 {
 	uint8_t *smsp = msgb_sms(msg);
 	struct gsm_sms *gsms;
 	unsigned int sms_alphabet;
-	uint8_t sms_mti, sms_mms;
+	uint8_t sms_mti;
 	uint8_t oa_len_bytes;
 	uint8_t address_lv[12]; /* according to 03.40 / 9.1.2.5 */
 	int rc = 0;
 
 	gsms = sms_alloc();
+	gsms->msg_ref = msg_ref;
 
 	/* invert those fields where 0 means active/present */
 	sms_mti = *smsp & 0x03;
-	sms_mms = !!(*smsp & 0x04);
+	/* uint8_t sms_mms = !!(*smsp & 0x04); */
 	gsms->status_rep_req = (*smsp & 0x20);
 	gsms->ud_hdr_ind = (*smsp & 0x40);
 	gsms->reply_path_req  = (*smsp & 0x80);
@@ -289,7 +302,8 @@ static int gsm340_rx_tpdu(struct gsm_trans *trans, struct msgb *msg)
 
 		switch (sms_alphabet) {
 		case DCS_7BIT_DEFAULT:
-			gsm_7bit_decode(gsms->text, smsp, gsms->user_data_len);
+			gsm_7bit_decode_n(gsms->text, sizeof(gsms->text),
+				smsp, gsms->user_data_len);
 			break;
 		case DCS_8BIT_DATA:
 		case DCS_UCS2:
@@ -379,10 +393,10 @@ static int gsm411_rx_rp_ud(struct msgb *msg, struct gsm_trans *trans,
 
 	LOGP(DLSMS, LOGL_INFO, "DST(%u,%s)\n", src_len,
 		osmo_hexdump(src, src_len));
-	LOGP(DLSMS, LOGL_INFO, "TPDU(%li,%s)\n", msg->tail-msg->l4h,
+	LOGP(DLSMS, LOGL_INFO, "TPDU(%ti,%s)\n", msg->tail-msg->l4h,
 		osmo_hexdump(msg->l4h, msg->tail-msg->l4h));
 
-	rc = gsm340_rx_tpdu(trans, msg);
+	rc = gsm340_rx_tpdu(trans, msg, rph->msg_ref);
 	if (rc == 0)
 		return gsm411_send_rp_ack(trans, rph->msg_ref);
 	else if (rc > 0)
@@ -624,13 +638,12 @@ static int gsm340_gen_tpdu(struct msgb *msg, struct gsm_sms *sms)
 }
 
 /* Take a SMS in gsm_sms structure and send it. */
-static int gsm411_tx_sms_submit(struct osmocom_ms *ms, const char *sms_sca,
+int gsm411_tx_sms_submit(struct osmocom_ms *ms, const char *sms_sca,
 	struct gsm_sms *sms)
 {
 	struct msgb *msg;
 	struct gsm_trans *trans;
 	uint8_t *data, *rp_ud_len;
-	uint8_t msg_ref = 42;
 	int rc;
 	int transaction_id;
 	uint8_t sca[11];	/* max len per 03.40 */
@@ -638,7 +651,7 @@ static int gsm411_tx_sms_submit(struct osmocom_ms *ms, const char *sms_sca,
 	LOGP(DLSMS, LOGL_INFO, "..._sms_submit()\n");
 
 	/* no running, no transaction */
-	if (!ms->started || ms->shutdown) {
+	if (!ms->started || ms->shutdown != MS_SHUTDOWN_NONE) {
 		LOGP(DLSMS, LOGL_ERROR, "Phone is down\n");
 		gsm411_sms_report(ms, sms, GSM411_RP_CAUSE_MO_TEMP_FAIL);
 		sms_free(sms);
@@ -701,20 +714,21 @@ error:
 
 	LOGP(DLSMS, LOGL_INFO, "TX: SMS DELIVER\n");
 
-	gsm411_push_rp_header(msg, GSM411_MT_RP_DATA_MO, msg_ref);
+	gsm411_push_rp_header(msg, GSM411_MT_RP_DATA_MO, sms->msg_ref);
 	return gsm411_smr_send(&trans->sms.smr_inst, GSM411_SM_RL_DATA_REQ,
 		msg);
 }
 
 /* create and send SMS */
 int sms_send(struct osmocom_ms *ms, const char *sms_sca, const char *number,
-	const char *text)
+	const char *text, uint8_t msg_ref)
 {
 	struct gsm_sms *sms = sms_from_text(number, 0, text);
 
 	if (!sms)
 		return -ENOMEM;
 
+	sms->msg_ref = msg_ref;
 	return gsm411_tx_sms_submit(ms, sms_sca, sms);
 }
 

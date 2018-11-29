@@ -1,6 +1,6 @@
 /* osmocon */
 
-/* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+/* (C) 2010,2018 by Harald Welte <laforge@gnumonks.org>
  * (C) 2010 by Holger Hans Peter Freyther <zecke@selfish.org>
  * (C) 2010 by Steve Markgraf <steve@steve-m.de>
  *
@@ -44,6 +44,8 @@
 #include <osmocom/core/serial.h>
 #include <osmocom/core/talloc.h>
 #include <osmocom/core/timer.h>
+#include <osmocom/core/application.h>
+#include <osmocom/core/socket.h>
 
 #include <arpa/inet.h>
 
@@ -209,13 +211,13 @@ static const uint8_t chainloader[] = {
 
 /* Calypso romloader specific */
 static const uint8_t romload_ident_cmd[] =	{ 0x3c, 0x69 };	/* <i */
-static const uint8_t romload_abort_cmd[] =	{ 0x3c, 0x61 };	/* <a */
+static const uint8_t __attribute__((__unused__)) romload_abort_cmd[] =	{ 0x3c, 0x61 };	/* <a */
 static const uint8_t romload_write_cmd[] =	{ 0x3c, 0x77 };	/* <w */
 static const uint8_t romload_checksum_cmd[] =	{ 0x3c, 0x63 };	/* <c */
 static const uint8_t romload_branch_cmd[] =	{ 0x3c, 0x62 };	/* <b */
 static const uint8_t romload_ident_ack[] =	{ 0x3e, 0x69 };	/* >i */
 static const uint8_t romload_param_ack[] =	{ 0x3e, 0x70 };	/* >p */
-static const uint8_t romload_param_nack[] =	{ 0x3e, 0x50 };	/* >P */
+static const uint8_t __attribute__((__unused__)) romload_param_nack[] =	{ 0x3e, 0x50 };	/* >P */
 static const uint8_t romload_block_ack[] =	{ 0x3e, 0x77 };	/* >w */
 static const uint8_t romload_block_nack[] =	{ 0x3e, 0x57 };	/* >W */
 static const uint8_t romload_checksum_ack[] =	{ 0x3e, 0x63 };	/* >c */
@@ -313,7 +315,8 @@ int read_file(const char *filename, int chainload)
 	dnload.data = malloc(MAX_HDR_SIZE + payload_size);
 
 	if (!dnload.data) {
-		close(fd);
+		if (!chainload)
+			close(fd);
 		fprintf(stderr, "No memory\n");
 		return -ENOMEM;
 	}
@@ -469,7 +472,7 @@ static int romload_prepare_block(void)
 	remaining_bytes = dnload.data_len - 3 -
 			(dnload.block_payload_size * dnload.block_number);
 
-	memcpy(block_data, dnload.write_ptr, dnload.block_payload_size);
+	memcpy(block_data, dnload.write_ptr, OSMO_MIN(dnload.block_payload_size, remaining_bytes));
 
 	if (remaining_bytes <= dnload.block_payload_size) {
 		fill_bytes = (dnload.block_payload_size - remaining_bytes);
@@ -646,7 +649,7 @@ static int handle_write_dnload(void)
 
 	dnload.write_ptr += rc;
 
-	printf("%u bytes (%u/%u)\n", rc, dnload.write_ptr - dnload.data,
+	printf("%u bytes (%lu/%u)\n", rc, dnload.write_ptr - dnload.data,
 		dnload.data_len);
 
 	return 0;
@@ -1331,47 +1334,14 @@ static int register_tool_server(struct tool_server *ts,
 				uint8_t dlci)
 {
 	struct osmo_fd *bfd = &ts->bfd;
-	struct sockaddr_un local;
-	unsigned int namelen;
 	int rc;
 
-	bfd->fd = socket(AF_UNIX, SOCK_STREAM, 0);
-
-	if (bfd->fd < 0) {
+	rc = osmo_sock_unix_init_ofd(bfd, SOCK_STREAM, 0, path, OSMO_SOCK_F_BIND);
+	if (rc < 0) {
 		fprintf(stderr, "Failed to create Unix Domain Socket.\n");
 		return -1;
 	}
 
-	local.sun_family = AF_UNIX;
-	strncpy(local.sun_path, path, sizeof(local.sun_path));
-	local.sun_path[sizeof(local.sun_path) - 1] = '\0';
-	unlink(local.sun_path);
-
-	/* we use the same magic that X11 uses in Xtranssock.c for
-	 * calculating the proper length of the sockaddr */
-#if defined(BSD44SOCKETS) || defined(__UNIXWARE__)
-	local.sun_len = strlen(local.sun_path);
-#endif
-#if defined(BSD44SOCKETS) || defined(SUN_LEN)
-	namelen = SUN_LEN(&local);
-#else
-	namelen = strlen(local.sun_path) +
-		  offsetof(struct sockaddr_un, sun_path);
-#endif
-
-	rc = bind(bfd->fd, (struct sockaddr *) &local, namelen);
-	if (rc != 0) {
-		fprintf(stderr, "Failed to bind the unix domain socket. '%s'\n",
-			local.sun_path);
-		return -1;
-	}
-
-	if (listen(bfd->fd, 0) != 0) {
-		fprintf(stderr, "Failed to listen.\n");
-		return -1;
-	}
-
-	bfd->when = BSC_FD_READ;
 	bfd->cb = tool_accept;
 	bfd->data = ts;
 
@@ -1381,11 +1351,6 @@ static int register_tool_server(struct tool_server *ts,
 	tool_server_for_dlci[dlci] = ts;
 
 	sercomm_register_rx_cb(dlci, hdlc_tool_cb);
-
-	if (osmo_fd_register(bfd) != 0) {
-		fprintf(stderr, "Failed to register the bfd.\n");
-		return -1;
-	}
 
 	return 0;
 }
@@ -1422,6 +1387,8 @@ int main(int argc, char **argv)
 	dnload.mode = MODE_C123;
 	dnload.beacon_interval = DEFAULT_BEACON_INTERVAL;
 	dnload.do_chainload = 0;
+
+	osmo_init_ignore_signals();
 
 	while ((opt = getopt(argc, argv, "d:hl:p:m:cs:i:v")) != -1) {
 		switch (opt) {

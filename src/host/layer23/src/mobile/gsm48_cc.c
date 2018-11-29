@@ -38,8 +38,6 @@
 #include <osmocom/bb/mobile/voice.h>
 #include <l1ctl_proto.h>
 
-extern void *l23_ctx;
-
 static int gsm48_cc_tx_release(struct gsm_trans *trans, void *arg);
 static int gsm48_rel_null_free(struct gsm_trans *trans);
 int mncc_release_ind(struct osmocom_ms *ms, struct gsm_trans *trans,
@@ -1925,7 +1923,7 @@ int mncc_tx_to_cc(void *inst, int msg_type, void *arg)
 	struct gsm_trans *trans;
 	int i, rc;
 
-	if (!ms->started || ms->shutdown) {
+	if (!ms->started || ms->shutdown != MS_SHUTDOWN_NONE) {
 		LOGP(DCC, LOGL_NOTICE, "Phone is down!\n");
 		if (ms->mncc_entity.mncc_recv && msg_type != MNCC_REL_REQ) {
 			struct gsm_mncc rel;

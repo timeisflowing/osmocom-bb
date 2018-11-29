@@ -24,6 +24,8 @@
 #include <string.h>
 #include <osmocom/core/talloc.h>
 
+#include <osmocom/bb/mobile/app_mobile.h>
+#include <osmocom/bb/common/utils.h>
 #include <osmocom/bb/common/logging.h>
 #include <osmocom/bb/common/osmocom_data.h>
 #include <osmocom/bb/common/networks.h>
@@ -89,6 +91,10 @@ int gsm_settings_init(struct osmocom_ms *ms)
 	/* software features */
 	set->cc_dtmf = 1;
 
+	set->any_timeout = MOB_C7_DEFLT_ANY_TIMEOUT;
+
+	set->store_sms = true;
+
 	INIT_LLIST_HEAD(&set->abbrev);
 
 	return 0;
@@ -143,6 +149,8 @@ int gsm_settings_exit(struct osmocom_ms *ms)
 		talloc_free(abbrev);
 	}
 
+	script_lua_close(ms);
+
 	return 0;
 }
 
@@ -170,18 +178,18 @@ char *gsm_check_imei(const char *imei, const char *sv)
 int gsm_random_imei(struct gsm_settings *set)
 {
 	int digits = set->imei_random;
-	char rand[16];
+	char rand[16+1];
 
 	if (digits <= 0)
 		return 0;
 	if (digits > 15)
 		digits = 15;
 
-	sprintf(rand, "%08ld", random() % 100000000);
-	sprintf(rand + 8, "%07ld", random() % 10000000);
+	sprintf(rand, "%08d", layer23_random() % 100000000);
+	sprintf(rand + 8, "%07d", layer23_random() % 10000000);
 
 	strcpy(set->imei + 15 - digits, rand + 15 - digits);
-	strncpy(set->imeisv, set->imei, 15);
+	osmo_strlcpy(set->imeisv, set->imei, 15);
 
 	return 0;
 }

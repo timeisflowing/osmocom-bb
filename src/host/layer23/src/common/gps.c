@@ -60,8 +60,19 @@ static struct gps_data_t* gdata = NULL;
 
 #if GPSD_API_MAJOR_VERSION >= 5
 static struct gps_data_t _gdata;
-#define gps_poll gps_read
 #endif
+
+static inline int compat_gps_read(struct gps_data_t *data)
+{
+/* API break in gpsd 6bba8b329fc7687b15863d30471d5af402467802 */
+#if GPSD_API_MAJOR_VERSION >= 7 && GPSD_API_MINOR_VERSION >= 0
+	return gps_read(data, NULL, 0);
+#elif GPSD_API_MAJOR_VERSION >= 5
+	return gps_read(data);
+#else
+	return gps_poll(data);
+#endif
+}
 
 int osmo_gpsd_cb(struct osmo_fd *bfd, unsigned int what)
 {
@@ -85,7 +96,7 @@ int osmo_gpsd_cb(struct osmo_fd *bfd, unsigned int what)
 #endif
 
 	/* polling returned an error */
-	if (gps_poll(gdata))
+	if (compat_gps_read(gdata))
 	    goto gps_not_ready;
 
 	/* data are valid */
@@ -234,7 +245,7 @@ static int osmo_serialgps_line(char *line)
 	if (line[23] == 'W')
 		longitude = 360.0 - longitude;
 	g.longitude = longitude;
-	
+
 	LOGP(DGPS, LOGL_DEBUG, "%s\n", line);
 	LOGP(DGPS, LOGL_INFO, " time=%02d:%02d:%02d %04d-%02d-%02d, "
 		"diff-to-host=%d, latitude=%do%.4f, longitude=%do%.4f\n",
@@ -324,8 +335,8 @@ int osmo_serialgps_open(void)
 	case  38400:
 		baud = B38400;     break;
 	case  57600:
-		baud = B57600;     break;	
-	case 115200: 
+		baud = B57600;     break;
+	case 115200:
 		baud = B115200;    break;
 	}
 
@@ -399,4 +410,3 @@ void osmo_gps_close(void)
 			return;
 	}
 }
-

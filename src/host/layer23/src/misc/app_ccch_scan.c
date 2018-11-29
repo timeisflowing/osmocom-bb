@@ -42,128 +42,116 @@
 #include <l1ctl_proto.h>
 
 static struct {
-	int has_si1;
 	int ccch_mode;
-	int ccch_enabled;
-	int rach_count;
-	struct gsm_sysinfo_freq cell_arfcns[1024];
 } app_state;
 
+static int bcch_check_tc(uint8_t si_type, uint8_t tc)
+{
+	/* FIXME: there is no tc information (always 0) */
+	return 0;
+
+	switch (si_type) {
+	case GSM48_MT_RR_SYSINFO_1:
+		if (tc != 0)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_2:
+		if (tc != 1)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_3:
+		if (tc != 2 && tc != 6)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_4:
+		if (tc != 3 && tc != 7)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_7:
+		if (tc != 7)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_8:
+		if (tc != 3)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_9:
+		if (tc != 4)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_13:
+		if (tc != 4 && tc != 0)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_16:
+		if (tc != 6)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_17:
+		if (tc != 2)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_2bis:
+		if (tc != 5)
+			return -EINVAL;
+		break;
+	case GSM48_MT_RR_SYSINFO_2ter:
+		if (tc != 5 && tc != 4)
+			return -EINVAL;
+		break;
+
+	/* The following types are used on SACCH only */
+	case GSM48_MT_RR_SYSINFO_5:
+	case GSM48_MT_RR_SYSINFO_6:
+	case GSM48_MT_RR_SYSINFO_5bis:
+	case GSM48_MT_RR_SYSINFO_5ter:
+		break;
+
+	/* Unknown SI type */
+	default:
+		LOGP(DRR, LOGL_INFO, "Unknown SI (type=0x%02x)\n", si_type);
+		return -ENOTSUP;
+	};
+
+	return 0;
+}
+
+static void handle_si3(struct osmocom_ms *ms,
+	struct gsm48_system_information_type_3 *si)
+{
+	if (app_state.ccch_mode != CCCH_MODE_NONE)
+		return;
+
+	if (si->control_channel_desc.ccch_conf == RSL_BCCH_CCCH_CONF_1_C)
+		app_state.ccch_mode = CCCH_MODE_COMBINED;
+	else
+		app_state.ccch_mode = CCCH_MODE_NON_COMBINED;
+
+	l1ctl_tx_ccch_mode_req(ms, app_state.ccch_mode);
+}
 
 static void dump_bcch(struct osmocom_ms *ms, uint8_t tc, const uint8_t *data)
 {
 	struct gsm48_system_information_type_header *si_hdr;
 	si_hdr = (struct gsm48_system_information_type_header *) data;
+	uint8_t si_type = si_hdr->system_information;
+
+	LOGP(DRR, LOGL_INFO, "BCCH message (type=0x%02x): %s\n",
+		si_type, gsm48_rr_msg_name(si_type));
+
+	if (bcch_check_tc(si_type, tc) == -EINVAL)
+		LOGP(DRR, LOGL_INFO, "SI on wrong tc=%u\n", tc);
 
 	/* GSM 05.02 §6.3.1.3 Mapping of BCCH data */
-	switch (si_hdr->system_information) {
-	case GSM48_MT_RR_SYSINFO_1:
-#ifdef BCCH_TC_CHECK
-		if (tc != 0)
-			LOGP(DRR, LOGL_ERROR, "SI1 on the wrong TC: %d\n", tc);
-#endif
-		if (!app_state.has_si1) {
-			struct gsm48_system_information_type_1 *si1 =
-				(struct gsm48_system_information_type_1 *)data;
-
-			gsm48_decode_freq_list(app_state.cell_arfcns,
-			                       si1->cell_channel_description,
-					       sizeof(si1->cell_channel_description),
-					       0xff, 0x01);
-
-			app_state.has_si1 = 1;
-			LOGP(DRR, LOGL_ERROR, "SI1 received.\n");
-		}
-		break;
-	case GSM48_MT_RR_SYSINFO_2:
-#ifdef BCCH_TC_CHECK
-		if (tc != 1)
-			LOGP(DRR, LOGL_ERROR, "SI2 on the wrong TC: %d\n", tc);
-#endif
-		break;
+	switch (si_type) {
 	case GSM48_MT_RR_SYSINFO_3:
-#ifdef BCCH_TC_CHECK
-		if (tc != 2 && tc != 6)
-			LOGP(DRR, LOGL_ERROR, "SI3 on the wrong TC: %d\n", tc);
-#endif
-		if (app_state.ccch_mode == CCCH_MODE_NONE) {
-			struct gsm48_system_information_type_3 *si3 =
-				(struct gsm48_system_information_type_3 *)data;
+		handle_si3(ms,
+			(struct gsm48_system_information_type_3 *) data);
+		break;
 
-			if (si3->control_channel_desc.ccch_conf == RSL_BCCH_CCCH_CONF_1_C)
-				app_state.ccch_mode = CCCH_MODE_COMBINED;
-			else
-				app_state.ccch_mode = CCCH_MODE_NON_COMBINED;
-
-			l1ctl_tx_ccch_mode_req(ms, app_state.ccch_mode);
-		}
-		break;
-	case GSM48_MT_RR_SYSINFO_4:
-#ifdef BCCH_TC_CHECK
-		if (tc != 3 && tc != 7)
-			LOGP(DRR, LOGL_ERROR, "SI4 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_5:
-		break;
-	case GSM48_MT_RR_SYSINFO_6:
-		break;
-	case GSM48_MT_RR_SYSINFO_7:
-#ifdef BCCH_TC_CHECK
-		if (tc != 7)
-			LOGP(DRR, LOGL_ERROR, "SI7 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_8:
-#ifdef BCCH_TC_CHECK
-		if (tc != 3)
-			LOGP(DRR, LOGL_ERROR, "SI8 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_9:
-#ifdef BCCH_TC_CHECK
-		if (tc != 4)
-			LOGP(DRR, LOGL_ERROR, "SI9 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_13:
-#ifdef BCCH_TC_CHECK
-		if (tc != 4 && tc != 0)
-			LOGP(DRR, LOGL_ERROR, "SI13 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_16:
-#ifdef BCCH_TC_CHECK
-		if (tc != 6)
-			LOGP(DRR, LOGL_ERROR, "SI16 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_17:
-#ifdef BCCH_TC_CHECK
-		if (tc != 2)
-			LOGP(DRR, LOGL_ERROR, "SI17 on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_2bis:
-#ifdef BCCH_TC_CHECK
-		if (tc != 5)
-			LOGP(DRR, LOGL_ERROR, "SI2bis on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_2ter:
-#ifdef BCCH_TC_CHECK
-		if (tc != 5 && tc != 4)
-			LOGP(DRR, LOGL_ERROR, "SI2ter on the wrong TC: %d\n", tc);
-#endif
-		break;
-	case GSM48_MT_RR_SYSINFO_5bis:
-		break;
-	case GSM48_MT_RR_SYSINFO_5ter:
-		break;
 	default:
-		LOGP(DRR, LOGL_ERROR, "Unknown SI: %d\n",
-		     si_hdr->system_information);
-		break;
+		/* We don't care about other types of SI */
+		break; /* thus there is nothing to do */
 	};
 }
 
@@ -182,8 +170,6 @@ static int gsm48_rx_imm_ass(struct msgb *msg, struct osmocom_ms *ms)
 	if (ia->page_mode & 0xf0)
 		return 0;
 
-	/* FIXME: compare RA and GSM time with when we sent RACH req */
-
 	rsl_dec_chan_nr(ia->chan_desc.chan_nr, &ch_type, &ch_subch, &ch_ts);
 
 	if (!ia->chan_desc.h0.h) {
@@ -193,39 +179,23 @@ static int gsm48_rx_imm_ass(struct msgb *msg, struct osmocom_ms *ms)
 		arfcn = ia->chan_desc.h0.arfcn_low | (ia->chan_desc.h0.arfcn_high << 8);
 
 		LOGP(DRR, LOGL_NOTICE, "GSM48 IMM ASS (ra=0x%02x, chan_nr=0x%02x, "
-			"ARFCN=%u, TS=%u, SS=%u, TSC=%u) ", ia->req_ref.ra,
+			"ARFCN=%u, TS=%u, SS=%u, TSC=%u)\n", ia->req_ref.ra,
 			ia->chan_desc.chan_nr, arfcn, ch_ts, ch_subch,
 			ia->chan_desc.h0.tsc);
 
 	} else {
 		/* Hopping */
-		uint8_t maio, hsn, ma_len;
-		uint16_t ma[64], arfcn;
-		int i, j, k;
+		uint8_t maio, hsn;
 
 		hsn = ia->chan_desc.h1.hsn;
 		maio = ia->chan_desc.h1.maio_low | (ia->chan_desc.h1.maio_high << 2);
 
 		LOGP(DRR, LOGL_NOTICE, "GSM48 IMM ASS (ra=0x%02x, chan_nr=0x%02x, "
-			"HSN=%u, MAIO=%u, TS=%u, SS=%u, TSC=%u) ", ia->req_ref.ra,
+			"HSN=%u, MAIO=%u, TS=%u, SS=%u, TSC=%u)\n", ia->req_ref.ra,
 			ia->chan_desc.chan_nr, hsn, maio, ch_ts, ch_subch,
 			ia->chan_desc.h1.tsc);
-
-		/* decode mobile allocation */
-		ma_len = 0;
-		for (i=1, j=0; i<=1024; i++) {
-			arfcn = i & 1023;
-			if (app_state.cell_arfcns[arfcn].mask & 0x01) {
-				k = ia->mob_alloc_len - (j>>3) - 1;
-				if (ia->mob_alloc[k] & (1 << (j&7))) {
-					ma[ma_len++] = arfcn;
-				}
-				j++;
-			}
-		}
 	}
 
-	LOGPC(DRR, LOGL_NOTICE, "\n");
 	return 0;
 }
 
@@ -406,13 +376,46 @@ static int gsm48_rx_paging_p3(struct msgb *msg, struct osmocom_ms *ms)
 	return 0;
 }
 
+/* Dummy Paging Request 1 with "no identity" */
+static const uint8_t paging_fill[] = {
+	0x15, 0x06, 0x21, 0x00, 0x01, 0xf0, 0x2b,
+	/* The rest part may be randomized */
+};
+
+/* LAPDm func=UI fill frame (for the BTS side) */
+static const uint8_t lapdm_fill[] = {
+	0x03, 0x03, 0x01, 0x2b,
+	/* The rest part may be randomized */
+};
+
+/* TODO: share / generalize this code */
+static bool is_fill_frame(struct msgb *msg)
+{
+	size_t l2_len = msgb_l3len(msg);
+	uint8_t *l2 = msgb_l3(msg);
+
+	OSMO_ASSERT(l2_len == GSM_MACBLOCK_LEN);
+
+	if (!memcmp(l2, paging_fill, sizeof(paging_fill)))
+		return true;
+	if (!memcmp(l2, lapdm_fill, sizeof(lapdm_fill)))
+		return true;
+
+	return false;
+}
+
 int gsm48_rx_ccch(struct msgb *msg, struct osmocom_ms *ms)
 {
 	struct gsm48_system_information_type_header *sih = msgb_l3(msg);
 	int rc = 0;
 
+	/* Skip dummy (fill) frames */
+	if (is_fill_frame(msg))
+		return 0;
+
 	if (sih->rr_protocol_discriminator != GSM48_PDISC_RR)
-		LOGP(DRR, LOGL_ERROR, "PCH pdisc != RR\n");
+		LOGP(DRR, LOGL_ERROR, "PCH pdisc (%s) != RR\n",
+			gsm48_pdisc_name(sih->rr_protocol_discriminator));
 
 	switch (sih->system_information) {
 	case GSM48_MT_RR_PAG_REQ_1:
@@ -434,8 +437,9 @@ int gsm48_rx_ccch(struct msgb *msg, struct osmocom_ms *ms)
 		/* wireshark know that this is SI2 quater and for 3G interop */
 		break;
 	default:
-		LOGP(DRR, LOGL_NOTICE, "unknown PCH/AGCH type 0x%02x\n",
-			sih->system_information);
+		LOGP(DRR, LOGL_NOTICE, "Unknown PCH/AGCH message "
+			"(type 0x%02x): %s\n", sih->system_information,
+			msgb_hexdump_l3(msg));
 		rc = -EINVAL;
 	}
 
@@ -449,25 +453,13 @@ int gsm48_rx_bcch(struct msgb *msg, struct osmocom_ms *ms)
 	//dump_bcch(dl->time.tc, ccch->data);
 	dump_bcch(ms, 0, msg->l3h);
 
-	/* Req channel logic */
-	if (app_state.ccch_enabled && (app_state.rach_count < 2)) {
-		l1ctl_tx_rach_req(ms, app_state.rach_count, 0,
-			app_state.ccch_mode == CCCH_MODE_COMBINED);
-		app_state.rach_count++;
-	}
-
 	return 0;
 }
 
 void layer3_app_reset(void)
 {
 	/* Reset state */
-	app_state.has_si1 = 0;
 	app_state.ccch_mode = CCCH_MODE_NONE;
-	app_state.ccch_enabled = 0;
-	app_state.rach_count = 0;
-
-	memset(&app_state.cell_arfcns, 0x00, sizeof(app_state.cell_arfcns));
 }
 
 static int signal_cb(unsigned int subsys, unsigned int signal,
